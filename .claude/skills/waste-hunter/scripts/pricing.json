@@ -1,5 +1,5 @@
 {
-  "_about": "Fallback list prices, used only when no billed cost (Consumption API) and no Advisor figure exist. Approximate USD pay-as-you-go monthly prices (730 h), US East-ish. Regional and negotiated rates differ, which is why the report labels these 'estimated'. Edit freely.",
+  "_about": "Fallback list prices, used only when there's no billed cost, no Advisor figure AND no regional price from the Azure Retail Prices API (API unreachable, -OfflinePricing, or a SKU with no flat meter such as Premium SSD v2, Ultra or Elastic Premium). Approximate USD pay-as-you-go monthly prices (730 h), US East. The disk tier table and hoursPerMonth are also used for live lookups. Edit freely.",
   "currency": "USD",
   "hoursPerMonth": 730,
 

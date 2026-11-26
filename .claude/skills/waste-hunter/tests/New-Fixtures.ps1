@@ -16,7 +16,7 @@ function Row($wt, $sub, $rg, $prov, $name, $loc, [hashtable] $x) {
 }
 function Save($name, $obj) { ConvertTo-Json -InputObject @($obj) -Depth 10 | Set-Content (Join-Path $Out $name) -Encoding utf8 }
 
-Set-Content (Join-Path $Out 'account.json') (@{ id = $P; name = 'demo-prod'; tenantId = $T; state = 'Enabled' } | ConvertTo-Json) -Encoding utf8
+Set-Content (Join-Path $Out 'account.json') (@{ id = $P; name = 'demo-prod'; tenantId = $T; state = 'Enabled'; environmentName = 'AzureCloud' } | ConvertTo-Json) -Encoding utf8
 Save 'accounts.json' @(
     @{ id = $P; name = 'demo-prod'; tenantId = $T; state = 'Enabled'; isDefault = $true },
     @{ id = $D; name = 'demo-dev';  tenantId = $T; state = 'Enabled'; isDefault = $false },
@@ -28,10 +28,10 @@ Save '01-unattached-disks.json' @(
     (Row 'unattached-disk' $P 'rg-sql-prod' $disk 'disk-sql-data-old' 'eastus' @{ owner = 'data-team@example.com'; app = 'billing-db'; env = 'prod'
         createdTime = (Ago 610); ageDays = 610; idleDays = 140; idleSource = 'LastOwnershipUpdateTime'; sku = 'Premium_LRS'; tier = 'P30'; sizeGb = 1024
         reason = 'Unattached for 140 days (LastOwnershipUpdateTime)' }),
-    (Row 'unattached-disk' $D 'rg-build' $disk 'disk-temp-build' 'eastus' @{ owner = 'ci@example.com'; env = 'dev'
+    (Row 'unattached-disk' $D 'rg-build' $disk 'disk-temp-build' 'japaneast' @{ owner = 'ci@example.com'; env = 'dev'
         createdTime = (Ago 9); ageDays = 9; idleDays = 3; idleSource = 'LastOwnershipUpdateTime'; sku = 'StandardSSD_LRS'; tier = ''; sizeGb = 128
         confidence = 'low'; reason = 'Unattached for 3 days (LastOwnershipUpdateTime); recently detached, may be mid-redeploy' }),
-    (Row 'unattached-disk' $P 'rg-dr' $disk 'asrseeddisk-web01-a1b2c3' 'westus2' @{ app = 'web'; env = 'prod'
+    (Row 'unattached-disk' $P 'rg-dr' $disk 'asrseeddisk-web01-a1b2c3' 'westeurope' @{ app = 'web'; env = 'prod'
         createdTime = (Ago 200); ageDays = 200; idleDays = 45; idleSource = 'LastOwnershipUpdateTime'; sku = 'Premium_LRS'; tier = 'P15'; sizeGb = 256
         confidence = 'low'; reason = 'Unattached for 45 days (LastOwnershipUpdateTime); looks like an Azure Site Recovery replica/seed disk' }),
     (Row 'unattached-disk' $P 'rg-sql-prod' $disk 'disk-keep-forensics' 'eastus' @{ createdTime = (Ago 300); ageDays = 300; idleDays = 300
@@ -48,9 +48,9 @@ $pip = 'Microsoft.Network/publicIPAddresses'
 Save '03-unassociated-public-ips.json' @(
     (Row 'unassociated-public-ip' $D 'rg-legacy' $pip 'pip-vm-old01' 'eastus' @{ owner = 'platform@example.com'; env = 'dev'; idleSource = 'unknown (not exposed by Resource Graph)'
         sku = 'Standard'; tier = 'Regional'; extra = 'Static'; reason = 'Associated only with an orphaned NIC (no VM) (Standard / Static)' }),
-    (Row 'unassociated-public-ip' $P 'rg-web' $pip 'pip-old-lb-frontend' 'eastus' @{ app = 'web'; env = 'prod'; idleSource = 'unknown (not exposed by Resource Graph)'
+    (Row 'unassociated-public-ip' $P 'rg-web' $pip 'pip-old-lb-frontend' 'brazilsouth' @{ app = 'web'; env = 'prod'; idleSource = 'unknown (not exposed by Resource Graph)'
         sku = 'Standard'; tier = 'Regional'; extra = 'Static'; reason = 'Not associated with any resource (Standard / Static); has a DNS label, releasing it frees the FQDN' }),
-    (Row 'unassociated-public-ip' $D 'rg-sandbox' $pip 'pip-test-dyn' 'centralus' @{ idleSource = 'unknown (not exposed by Resource Graph)'
+    (Row 'unassociated-public-ip' $D 'rg-sandbox' $pip 'pip-test-dyn' 'centralindia' @{ idleSource = 'unknown (not exposed by Resource Graph)'
         sku = 'Basic'; tier = 'Regional'; extra = 'Dynamic'; confidence = 'low'; reason = 'Not associated with any resource (Basic / Dynamic); Basic dynamic and unassociated, so no charge, clutter only' }))
 
 $asp = 'Microsoft.Web/serverFarms'
@@ -59,7 +59,10 @@ Save '04-empty-app-service-plans.json' @(
         idleSource = 'unknown (not exposed by Resource Graph)'; sku = 'P1v3'; tier = 'PremiumV3'; sizeGb = 2; os = 'Linux'; extra = 'linux'
         reason = 'Plan hosts 0 apps (PremiumV3 P1v3 x2 instance(s))' }),
     (Row 'empty-app-service-plan' $D 'rg-sandbox' $asp 'asp-playground' 'centralus' @{ idleSource = 'unknown (not exposed by Resource Graph)'
-        sku = 'F1'; tier = 'Free'; sizeGb = 1; os = 'Windows'; extra = 'app'; confidence = 'low'; reason = 'Plan hosts 0 apps (Free F1 x1 instance(s)); free/consumption tier, no charge while empty' }))
+        sku = 'F1'; tier = 'Free'; sizeGb = 1; os = 'Windows'; extra = 'app'; confidence = 'low'; reason = 'Plan hosts 0 apps (Free F1 x1 instance(s)); free/consumption tier, no charge while empty' }),
+    (Row 'empty-app-service-plan' $P 'rg-reports' $asp 'asp-reports-weu' 'westeurope' @{ owner = 'bi-team@example.com'; app = 'reports'; env = 'prod'
+        idleSource = 'unknown (not exposed by Resource Graph)'; sku = 'S1'; tier = 'Standard'; sizeGb = 1; os = 'Windows'; extra = 'app'
+        reason = 'Plan hosts 0 apps (Standard S1 x1 instance(s))' }))
 
 $vm = 'Microsoft.Compute/virtualMachines'
 $vmBuild = Rid $D 'rg-build' $vm 'vm-build-agent-02'
@@ -68,16 +71,16 @@ Save '05-vms-stopped-not-deallocated.json' @(
     (Row 'vm-stopped-not-deallocated' $D 'rg-build' $vm 'vm-build-agent-02' 'eastus' @{ owner = 'ci@example.com'; app = 'build'; env = 'dev'
         createdTime = (Ago 420); ageDays = 420; idleSource = 'pending (CPU metrics)'; sku = 'Standard_D8s_v5'; tier = 'Regular'; os = 'Linux'
         reason = 'Power state is Stopped (not deallocated), so compute is still billed' }),
-    (Row 'vm-stopped-not-deallocated' $P 'rg-ops' $vm 'vm-win-jumpbox' 'eastus' @{ owner = 'ops@example.com'; env = 'prod'
+    (Row 'vm-stopped-not-deallocated' $P 'rg-ops' $vm 'vm-win-jumpbox' 'canadacentral' @{ owner = 'ops@example.com'; env = 'prod'
         createdTime = (Ago 800); ageDays = 800; idleSource = 'pending (CPU metrics)'; sku = 'Standard_B2ms'; tier = 'Regular'; os = 'Windows'; extra = ''
         reason = 'Power state is Stopped (not deallocated), so compute is still billed' }))
 
 $snap = 'Microsoft.Compute/snapshots'
 Save '06-old-snapshots.json' @(
-    (Row 'old-snapshot' $P 'rg-sql-prod' $snap 'snap-sql-pre-upgrade-2025' 'eastus' @{ owner = 'data-team@example.com'; app = 'billing-db'; env = 'prod'
+    (Row 'old-snapshot' $P 'rg-sql-prod' $snap 'snap-sql-pre-upgrade-2025' 'australiaeast' @{ owner = 'data-team@example.com'; app = 'billing-db'; env = 'prod'
         createdTime = (Ago 412); ageDays = 412; idleDays = 412; idleSource = 'timeCreated'; sku = 'Standard_LRS'; tier = 'full'; sizeGb = 1024
         reason = 'Snapshot is 412 days old (full); source disk still exists' }),
-    (Row 'old-snapshot' $D 'rg-legacy' $snap 'snap-vm-old01-osdisk' 'eastus' @{ env = 'dev'
+    (Row 'old-snapshot' $D 'rg-legacy' $snap 'snap-vm-old01-osdisk' 'uksouth' @{ env = 'dev'
         createdTime = (Ago 150); ageDays = 150; idleDays = 150; idleSource = 'timeCreated'; sku = 'Standard_LRS'; tier = 'incremental'; sizeGb = 128
         confidence = 'low'; reason = 'Snapshot is 150 days old (incremental); source disk was deleted, may be the only copy' }))
 

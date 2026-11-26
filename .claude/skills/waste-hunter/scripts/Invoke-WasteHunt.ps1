@@ -12,12 +12,17 @@
     $AllowedAz. The only command that changes anything is 'az account set'. It switches the local
     CLI context between tenants and is reset to your original default subscription in a finally block.
 
+    Estimated costs use each resource's own region. Prices come from the public Azure Retail Prices
+    API (prices.azure.com, unauthenticated GET, sent only SKU/region/currency filters) in -Currency,
+    with scripts/pricing.json (US East, USD) as the fallback. -OfflinePricing skips the API.
+
 .EXAMPLE
     pwsh ./Invoke-WasteHunt.ps1                                # enabled subscriptions in the current tenant
     pwsh ./Invoke-WasteHunt.ps1 -AllTenants                    # every tenant this login can reach
     pwsh ./Invoke-WasteHunt.ps1 -ManagementGroup mg-platform
     pwsh ./Invoke-WasteHunt.ps1 -Subscription "Sub A,0000-..."  # names or IDs, comma-separated, any tenant
-    pwsh ./Invoke-WasteHunt.ps1 -FixtureDir ../tests/fixtures  # offline demo with synthetic data, no Azure calls
+    pwsh ./Invoke-WasteHunt.ps1 -Currency EUR                  # regional list prices in euros
+    pwsh ./Invoke-WasteHunt.ps1 -FixtureDir ../tests/fixtures  # demo with synthetic data, no Azure calls
 #>
 [CmdletBinding(DefaultParameterSetName = 'Tenant')]
 param(
@@ -28,6 +33,9 @@ param(
     [string] $OutDir,
     [switch] $SkipMetrics,
     [switch] $SkipConsumption,
+    [ValidateSet('USD', 'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'DKK', 'EUR', 'GBP', 'INR', 'JPY', 'KRW', 'NOK', 'NZD', 'RUB', 'SEK', 'TWD')]
+    [string] $Currency = 'USD',
+    [switch] $OfflinePricing,
     [string] $FixtureDir
 )
 
@@ -57,6 +65,65 @@ $AllowedAz = @(
     'account list'
     'account set'      # local CLI context only, restored at the end
 )
+
+# ---------------------------------------------------------------------------------------------
+# Regional list prices: Azure Retail Prices API. A public, unauthenticated, read-only GET, and the
+# only allowed non-az read. Requests contain only service/SKU/region/currency filters, never tenant data.
+# ---------------------------------------------------------------------------------------------
+$PriceApi   = 'https://prices.azure.com/api/retail/prices'
+$PriceCache = @{}
+$PriceStats = @{ live = 0; fallback = 0; failedLookups = 0 }
+$script:PriceApiDown = [bool] $OfflinePricing
+$script:PriceFailStreak = 0
+
+function Get-ODataLiteral([object] $s) { ([string] $s) -replace "'", "''" }
+
+# GET with retry. The API rate-limits (429), so back off (honouring Retry-After) on 429, 5xx and
+# network errors, up to 4 attempts.
+function Invoke-PriceApi([string] $Url) {
+    for ($attempt = 1; ; $attempt++) {
+        try { return Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 20 }
+        catch {
+            $resp = $_.Exception.PSObject.Properties['Response'] ? $_.Exception.Response : $null
+            $code = $resp ? [int] $resp.StatusCode : 0
+            $maxAttempts = ($code -eq 0) ? 2 : 4     # network errors: retry once; rate limits and 5xx: up to 4
+            if ($attempt -ge $maxAttempts -or -not ($code -eq 0 -or $code -eq 429 -or $code -ge 500)) { throw }
+            $wait = 2 * $attempt
+            if ($resp -and $resp.Headers.RetryAfter -and $resp.Headers.RetryAfter.Delta) { $wait = [math]::Min(30, [math]::Ceiling($resp.Headers.RetryAfter.Delta.TotalSeconds)) }
+            Start-Sleep -Seconds $wait
+        }
+    }
+}
+
+# Matching price items (Consumption only). Returns elements, not a nested array.
+function Get-RetailItems([string] $Filter) {
+    if ($PriceCache.ContainsKey($Filter)) { return $PriceCache[$Filter] }
+    if ($script:PriceApiDown) { return }
+    $url = "${PriceApi}?currencyCode='$Currency'&`$filter=" + [uri]::EscapeDataString("$Filter and priceType eq 'Consumption'")
+    $items = [Collections.Generic.List[object]]::new()
+    try {
+        for ($page = 0; $url -and $page -lt 5; $page++) {
+            if (-not $url.StartsWith($PriceApi)) { throw "unexpected price API URL $url" }
+            $r = Invoke-PriceApi $url
+            foreach ($it in @($r.Items)) { $items.Add($it) }
+            $url = $r.NextPageLink
+        }
+        $script:PriceFailStreak = 0
+    }
+    catch {
+        # One failed lookup falls back for that finding only. Three in a row means the API is
+        # unreachable, so stop asking.
+        $PriceStats.failedLookups++
+        $script:PriceFailStreak++
+        if ($script:PriceFailStreak -ge 3) {
+            $script:PriceApiDown = $true
+            $warnings.Add("Retail Prices API unavailable after repeated failures, so the rest of this scan uses pricing.json (US East, USD). Last error: $($_.Exception.Message)")
+        }
+        return
+    }
+    $PriceCache[$Filter] = $items
+    return $items
+}
 
 function Invoke-AzRead {
     param([Parameter(Mandatory)] [string[]] $AzArgs)
@@ -315,19 +382,79 @@ $advByRes = @{}
 foreach ($a in $advisor) { $k = ([string] $a.id).ToLower(); if (-not $advByRes[$k]) { $advByRes[$k] = @() }; $advByRes[$k] += $a }
 $consumed = [Collections.Generic.HashSet[string]]::new()
 
+# Billing tier of a managed disk (P30, E10, S20, ...). properties.tier when set (premium performance
+# tiers), otherwise the smallest tier that fits the size. $null for per-GiB disks (Premium SSD v2, Ultra).
+function Get-DiskTier($f) {
+    $t = $Pricing.disks[([string] $f.sku) -replace '_ZRS$', '_LRS']
+    if (-not ($t -is [System.Collections.IDictionary] -and $t.ContainsKey('tiers'))) { return $null }
+    $i = [array]::IndexOf($t.tiers, [string] $f.tier)
+    if ($i -lt 0) {
+        $sizes = $Pricing.disks.tierSizesGb; $i = $sizes.Count - 1
+        for ($j = 0; $j -lt $sizes.Count; $j++) { if ([int] $f.sizeGb -le $sizes[$j]) { $i = $j; break } }
+    }
+    return @{ Name = $t.tiers[$i]; Price = $t.prices[$i] }
+}
+
+# Monthly list price in the resource's own region, from the Retail Prices API. $null means no
+# regional price was found, so the caller falls back to Get-Estimate.
+function Get-LivePrice($f) {
+    $region = ([string] $f.location).ToLower()
+    if ($script:PriceApiDown -or -not $region -or $region -eq 'global') { return $null }
+    $sku = [string] $f.sku; $rg = Get-ODataLiteral $region; $hours = $Pricing.hoursPerMonth
+    $red = ($sku -like '*_ZRS') ? 'ZRS' : 'LRS'
+    switch ($f.wasteType) {
+        'unattached-disk' {
+            $prod = @{ Premium = 'Premium SSD Managed Disks'; StandardSSD = 'Standard SSD Managed Disks'; Standard = 'Standard HDD Managed Disks' }[($sku -split '_')[0]]
+            $tier = Get-DiskTier $f
+            if (-not $prod -or -not $tier) { return $null }
+            $m = "$($tier.Name) $red"
+            $it = @(Get-RetailItems "serviceName eq 'Storage' and armRegionName eq '$rg' and productName eq '$prod' and skuName eq '$m'") |
+                Where-Object { $_.meterName -eq "$m Disk" -and $_.unitOfMeasure -eq '1/Month' } | Select-Object -First 1
+            if ($it) { return @{ Cost = [double] $it.retailPrice; Note = "$m list price, $region" } }
+        }
+        'old-snapshot' {
+            $prod = ($sku -like 'Premium*') ? 'Premium SSD Managed Disks' : 'Standard HDD Managed Disks'
+            $it = @(Get-RetailItems "serviceName eq 'Storage' and armRegionName eq '$rg' and productName eq '$prod' and skuName eq 'Snapshots $red'") |
+                Where-Object { $_.meterName -eq "$red Snapshots" -and $_.unitOfMeasure -eq '1 GB/Month' } | Select-Object -First 1
+            if ($it) { return @{ Cost = [double] $it.retailPrice * [int] $f.sizeGb; Note = "$red snapshot list price, $region; upper bound, provisioned GiB" } }
+        }
+        'unassociated-public-ip' {
+            if ($sku -ne 'Standard' -and $f.confidence -eq 'low') { return $null }   # no charge; Get-Estimate says so
+            $ipSku = ($f.tier -eq 'Global') ? 'Global' : $sku
+            $it = @(Get-RetailItems "serviceName eq 'Virtual Network' and armRegionName eq '$rg' and productName eq 'IP Addresses' and skuName eq '$(Get-ODataLiteral $ipSku)'") |
+                Where-Object { $_.meterName -eq "$ipSku IPv4 Static Public IP" -and $_.unitOfMeasure -eq '1 Hour' } | Select-Object -First 1
+            if ($it) { return @{ Cost = [double] $it.retailPrice * $hours; Note = "$ipSku static IP list price, $region" } }
+        }
+        'empty-app-service-plan' {
+            if ($sku -in $Pricing.appServicePlans.free -or $f.tier -in $Pricing.appServicePlans.free) { return $null }   # free; Get-Estimate says so
+            if ($sku -like 'EP*' -or $sku -like 'WS*') { return $null }   # Elastic Premium / Workflow: vCPU+memory meters
+            # The API spells some SKUs with a space ('P1 v3', 'I1 v2') and others without ('P0v3', 'P1mv3')
+            $alt = $sku -replace '(\d)(v\d)$', '$1 $2'
+            $linux = $f.os -eq 'Linux'
+            $it = @(Get-RetailItems "serviceName eq 'Azure App Service' and armRegionName eq '$rg' and (skuName eq '$(Get-ODataLiteral $sku)' or skuName eq '$(Get-ODataLiteral $alt)')") |
+                Where-Object { $_.unitOfMeasure -eq '1 Hour' -and (($_.productName -like '* - Linux') -eq $linux) } | Select-Object -First 1
+            if ($it) { $n = [math]::Max(1, [int] $f.sizeGb); return @{ Cost = [double] $it.retailPrice * $hours * $n; Note = "$sku $($f.os) list price x$n, $region" } }
+        }
+        'vm-stopped-not-deallocated' {
+            $spot = $f.tier -eq 'Spot'
+            $win  = $f.os -eq 'Windows' -and $f.extra -ne 'Windows_Server'   # Azure Hybrid Benefit = Linux rate
+            $it = @(Get-RetailItems "serviceName eq 'Virtual Machines' and armRegionName eq '$rg' and armSkuName eq '$(Get-ODataLiteral $sku)'") |
+                Where-Object { $_.unitOfMeasure -eq '1 Hour' -and ($_.skuName -notlike '*Low Priority*') -and (($_.skuName -like '*Spot*') -eq $spot) -and (($_.productName -like '*Windows*') -eq $win) } |
+                Select-Object -First 1
+            if ($it) { return @{ Cost = [double] $it.retailPrice * $hours; Note = "$sku $($win ? 'Windows' : 'Linux')$($spot ? ' Spot' : '') list price, $region" } }
+        }
+    }
+    return $null
+}
+
 function Get-Estimate($f) {
     $sku = [string] $f.sku
     switch ($f.wasteType) {
         'unattached-disk' {
-            $base = $sku -replace '_ZRS$', '_LRS'; $mult = ($sku -like '*_ZRS') ? $Pricing.disks.zrsMultiplier : 1
-            $t = $Pricing.disks[$base]
-            if ($t -is [System.Collections.IDictionary] -and $t.ContainsKey('tiers')) {
-                $i = [array]::IndexOf($t.tiers, [string] $f.tier)
-                if ($i -lt 0) {
-                    $sizes = $Pricing.disks.tierSizesGb; $i = $sizes.Count - 1
-                    for ($j = 0; $j -lt $sizes.Count; $j++) { if ([int] $f.sizeGb -le $sizes[$j]) { $i = $j; break } }
-                }
-                return @{ Cost = $t.prices[$i] * $mult; Note = "list price $($t.tiers[$i])" }
+            $tier = Get-DiskTier $f
+            if ($tier) {
+                $mult = ($sku -like '*_ZRS') ? $Pricing.disks.zrsMultiplier : 1
+                return @{ Cost = $tier.Price * $mult; Note = "list price $($tier.Name)" }
             }
             $perGb = $Pricing.disks.perGbFallback[$sku] ?? $Pricing.disks.perGbFallback.default
             return @{ Cost = $perGb * [int] $f.sizeGb; Note = 'list price per GiB, capacity only' }
@@ -394,6 +521,9 @@ function Get-Action($f) {
 
 function Format-Day($v) { if (-not $v) { return '' }; try { [DateTimeOffset]::Parse([string] $v, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime.ToString('yyyy-MM-dd') } catch { [string] $v } }
 
+# Sovereign clouds have their own portals
+$PortalHost = @{ AzureUSGovernment = 'portal.azure.us'; AzureChinaCloud = 'portal.azure.cn' }[[string] $original.environmentName] ?? 'portal.azure.com'
+
 $findings = [Collections.Generic.List[object]]::new()
 foreach ($r in @($detected) + @($advisor)) {
     $key = ([string] $r.id).ToLower()
@@ -435,16 +565,26 @@ foreach ($r in @($detected) + @($advisor)) {
         $f.monthlyCost = [math]::Round([double] $f.advisorMonthly, 2); $f.currency = $f.advisorCurrency ? $f.advisorCurrency : 'USD'; $f.costSource = 'advisor'
     }
     else {
-        $e = Get-Estimate $f
-        $f.monthlyCost = ($null -ne $e.Cost) ? [math]::Round([double] $e.Cost, 2) : $null
-        $f.currency = $Pricing.currency
-        $f.costSource = ($null -ne $e.Cost) ? "estimated ($($e.Note))" : "unknown ($($e.Note))"
+        $lp = Get-LivePrice $f
+        if ($lp) {
+            $f.monthlyCost = [math]::Round([double] $lp.Cost, 2); $f.currency = $Currency
+            $f.costSource = "estimated ($($lp.Note), Retail Prices API)"
+            if ($lp.Cost -gt 0) { $PriceStats.live++ }
+        }
+        else {
+            $e = Get-Estimate $f
+            $f.monthlyCost = ($null -ne $e.Cost) ? [math]::Round([double] $e.Cost, 2) : $null
+            $f.currency = $Pricing.currency
+            if ($null -eq $e.Cost) { $f.costSource = "unknown ($($e.Note))" }
+            elseif ($e.Cost -gt 0) { $f.costSource = "estimated ($($e.Note), pricing.json US East USD)"; $PriceStats.fallback++ }
+            else { $f.costSource = "free ($($e.Note))"; $f.currency = $Currency }   # zero is zero in any currency
+        }
     }
 
     $act = Get-Action $f
     $f.suggestedAction = $act[0]; $f.referenceCommand = $act[1]
     $f.subscriptionName = $SubName[[string] $r.subscriptionId] ?? ''
-    $f.portalUrl = "https://portal.azure.com/#@$($r.tenantId)/resource$($r.id)"
+    $f.portalUrl = "https://$PortalHost/#@$($r.tenantId)/resource$($r.id)"
     $f.createdTime = Format-Day $r.createdTime
     $findings.Add($f)
 }
@@ -463,8 +603,9 @@ $groups = @($groups | Sort-Object @{ e = { $_.Items.Count -gt 0 }; Descending = 
 # ---------------------------------------------------------------------------------------------
 function Esc([object] $s) { (([string] $s) -replace '\|', '\|' -replace '\r?\n', ' ').Trim() }
 function Format-Money([hashtable] $byCur) {
-    if (-not $byCur.Count) { return '0.00' }
-    (@($byCur.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { '{0:N2} {1}' -f $_.Value, $_.Key })) -join ' + '
+    $parts = @($byCur.GetEnumerator() | Where-Object { $_.Value -ne 0 } | Sort-Object Value -Descending)
+    if (-not $parts) { return "0.00 $Currency" }
+    (@($parts | ForEach-Object { '{0:N2} {1}' -f $_.Value, $_.Key })) -join ' + '
 }
 function Get-Totals($items) {
     $t = @{}; foreach ($i in @($items)) { if ($null -ne $i.monthlyCost) { $t[$i.currency] = ($t[$i.currency] ?? 0) + [double] $i.monthlyCost } }; $t
@@ -509,7 +650,8 @@ foreach ($t in $TypeInfo.Keys) {
     L "| $($TypeInfo[$t]) | $($g.Items.Count) | $(Format-Money (Get-Totals $g.Items)) | $($c.high) | $($c.medium) | $($c.low) | $($excluded[$t] ?? 0) |"
 }
 L ''
-L '**Cost sources:** *billed* is the actual 30-day cost from the Consumption API, scaled to 30 days. *advisor* is Azure Advisor''s monthly savings estimate. *estimated* is the list price from `scripts/pricing.json` (approximate USD PAYG; snapshot estimates are upper bounds). Advisor recommendations that match a finding above are merged into it and not counted twice.'
+$priceMode = $OfflinePricing ? "offline: ``scripts/pricing.json`` (US East, USD)" : "pay-as-you-go list prices for each resource's own region, in $Currency, from the Azure Retail Prices API, with ``scripts/pricing.json`` (US East, USD) as the fallback"
+L "**Cost sources:** *billed* is the actual 30-day cost from the Consumption API, scaled to 30 days. *advisor* is Azure Advisor's monthly savings estimate. *estimated* is $priceMode. Snapshot estimates are upper bounds. Advisor recommendations that match a finding above are merged into it and not counted twice."
 L ''
 
 foreach ($g in @($groups | Where-Object { $_.Items.Count })) {
@@ -543,6 +685,10 @@ L '|---|---|---|---|'
 foreach ($c in $coverage) { L "| ``$($c.Tenant)`` | $($c.Scope) | $(Esc $c.Subscriptions) | $($c.Status) |" }
 L ''
 L ('Rows returned per query (including ignored): ' + ((@($queryStats.GetEnumerator() | ForEach-Object { "``$($_.Key)`` $($_.Value)" })) -join ', ') + '.')
+if ($PriceStats.fallback -and -not $OfflinePricing) {
+    $why = $PriceStats.failedLookups ? " ($($PriceStats.failedLookups) price lookup(s) failed after retries)" : ''
+    $warnings.Add("$($PriceStats.fallback) finding(s) priced from pricing.json (US East, USD) because no regional price was available$why.")
+}
 $errs = @($coverage | ForEach-Object { foreach ($e in $_.Errors) { "``$($_.Tenant)``: $e" } })
 if ($errs -or $warnings) {
     L ''; L '**Warnings and errors:**'; L ''

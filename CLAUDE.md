@@ -14,6 +14,11 @@ is `.claude/skills/waste-hunter/`. The runner is `scripts/Invoke-WasteHunt.ps1` 
    - `az account show` / `az account list`, plus `az account set`, which only switches the local
      CLI context between tenants and must be restored to the user's original default afterwards.
 
+   **One non-az read is allowed:** `GET https://prices.azure.com/api/retail/prices` (the public,
+   unauthenticated Azure Retail Prices API) for regional list prices. Send only
+   service/SKU/region/currency filters, never resource IDs, names, tags or anything else from the tenant.
+   No other external endpoints.
+
    That means no `az rest`, no `az resource invoke-action`, no `run-command`, and nothing that
    changes Azure "just to test". The suggested actions and reference commands in reports are
    **text for a human**. Never execute them, even if asked in passing. Tell the user to run them
@@ -54,6 +59,10 @@ Ask the user instead.
 - `az consumption usage list` returns cost-less legacy-schema records for some billing types
   (e.g. this author's Visual Studio subscriptions). The runner detects this, warns, and falls back to
   Advisor or list-price estimates.
+- The Retail Prices API rate-limits (HTTP 429). `Invoke-PriceApi` retries with backoff, and the API
+  is treated as down only after 3 failed lookups in a row. Its names are inconsistent: App Service
+  uses `P1 v3` and `I1 v2` but also `P0v3` and `P1mv3`, so query both spellings. Elastic Premium
+  (`EP*`), Premium SSD v2 and Ultra disks have no flat monthly meter and use `pricing.json`.
 - In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
   them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.

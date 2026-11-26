@@ -40,8 +40,14 @@ pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -AllTenants
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -ManagementGroup mg-platform
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -Subscription "Prod,0000-..."   # names or IDs, comma-separated
 
+# Prices in another currency (USD by default)
+pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -Currency CAD
+
 # Faster: skip metrics and consumption calls (list-price estimates only)
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -SkipMetrics -SkipConsumption
+
+# No network calls for pricing (pricing.json only)
+pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -OfflinePricing
 ```
 
 Output goes to `reports/<timestamp>/`:
@@ -64,8 +70,14 @@ hidden silently.
 In order of preference, with the source shown per finding:
 1. **billed**: actual cost over the last 30 days (`az consumption usage list`), scaled to 30 days
 2. **advisor**: Azure Advisor's monthly savings figure
-3. **estimated**: list price from `scripts/pricing.json` (approximate USD pay-as-you-go; edit it to
-   match your region or agreement). Snapshot estimates are upper bounds.
+3. **estimated**: pay-as-you-go list price **in the resource's own region**, in `-Currency`, from
+   the public [Azure Retail Prices API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
+   If there's no regional price (Premium SSD v2, Ultra and Elastic Premium plans have no flat monthly
+   meter) or the API is unreachable, it falls back to `scripts/pricing.json` (approximate US East
+   USD), and the report says which findings were priced that way. Snapshot estimates are upper bounds.
+
+Works in every region. Portal links follow Azure Government and Azure China, and regional prices cover
+the public cloud and US Gov.
 
 ## Safety
 
@@ -73,6 +85,8 @@ In order of preference, with the source shown per finding:
   `advisor recommendation list`, `consumption usage list`, `account show/list/set`. Anything else
   throws. `account set` only switches the local CLI context for multi-tenant scans, and the
   original default subscription is restored afterwards.
+- The only non-`az` call is a GET to the public Retail Prices API. It's sent only service, SKU,
+  region and currency, never anything from your tenant. Use `-OfflinePricing` to skip it.
 - `.claude/settings.json` denies write and secret-reading `az` commands for Claude Code itself.
 - Queries project named columns only, never `properties` wholesale, so no secrets reach the output.
 - Coverage is checked: Resource Graph silently skips subscriptions you can't read, so the runner

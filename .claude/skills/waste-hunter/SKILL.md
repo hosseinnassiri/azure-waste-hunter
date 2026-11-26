@@ -12,7 +12,9 @@ a ranked report. **It never changes anything in Azure.**
 
 - READ-ONLY. The only `az` commands allowed are `az graph query`, `az monitor metrics list`,
   `az advisor recommendation list`, `az consumption` and other cost reads, and `az account show/list/set`.
-  The runner enforces this with an allow list (`Invoke-AzRead`).
+  The runner enforces this with an allow list (`Invoke-AzRead`). The only other read is the public
+  Azure Retail Prices API (`prices.azure.com`) for regional list prices, which gets SKU/region/currency
+  filters only.
 - Suggested actions and reference commands are text for the user. **Never execute them**, and
   don't offer to. If the user wants to act, tell them to review the commands and run them themselves.
 - Never print secrets, keys or connection strings.
@@ -29,8 +31,12 @@ Work out the scope from the request. If it isn't clear, default to the current t
 | a management group | `-ManagementGroup <mg-id>` |
 | one or more subscriptions (names or IDs) | `-Subscription "<name or id>,<name or id>"` (one comma-separated string) |
 
-Optional: `-SkipMetrics` (faster, no idle time for VMs), `-SkipConsumption` (no billed cost,
-estimates only), `-OutDir <path>`.
+Optional: `-Currency <code>` (default `USD`; for example `CAD`, `EUR`, `GBP`, `JPY`; use it when
+the user names a currency), `-OfflinePricing` (no price API, `pricing.json` only), `-SkipMetrics`
+(faster, no idle time for VMs), `-SkipConsumption` (no billed cost, estimates only), `-OutDir <path>`.
+
+Detection works in every region and in Azure Government and Azure China. Portal links follow the
+cloud; regional prices cover the public cloud and US Gov.
 
 ## Steps
 
@@ -87,8 +93,15 @@ Advisor recommendations on that resource. The report shows how many were exclude
 1. **billed**: actual cost over the last 30 days from `az consumption usage list`, scaled to 30
    days. Not available for every billing type; the report warns when it falls back.
 2. **advisor**: Advisor's `savingsAmount` (monthly).
-3. **estimated**: list price from `scripts/pricing.json` (approximate USD pay-as-you-go). Snapshot
+3. **estimated**: pay-as-you-go list price **for the resource's own region**, in `-Currency`, from
+   the Retail Prices API (looked up by disk tier, snapshot redundancy, IP SKU, App Service SKU and OS,
+   or VM size, OS and Spot). If no regional price exists or the API is unreachable, it falls back to
+   `scripts/pricing.json` (US East, USD); the cost source says so, and the report warns. Snapshot
    estimates are upper bounds, because snapshots are billed on the GiB actually used.
+4. **free**: NICs, free-tier plans and unassociated Basic dynamic IPs cost nothing.
+
+Billed and Advisor amounts keep their own currency. If it differs from `-Currency`, the total is shown
+per currency (for example `120.00 CAD + 35.00 USD`). Never add the parts together.
 
 ## Output
 
@@ -102,8 +115,8 @@ Advisor recommendations on that resource. The report shows how many were exclude
 
 Run each `queries/*.kql` with `az graph query -q @<file> --first 1000` for each tenant, plus
 `scripts/coverage-check.kql` first. Drop rows where `ignored` is 1. Merge `07` rows into matching
-IDs. Price findings from `pricing.json`. Write a report in the same shape. Say clearly that idle
-time and billed cost were skipped.
+IDs. Price findings from `pricing.json` (US East, USD). Write a report in the same shape. Say clearly
+that idle time, billed cost and regional prices were skipped.
 
 ## Demo without Azure
 
