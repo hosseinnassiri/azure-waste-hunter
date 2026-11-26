@@ -1,0 +1,28 @@
+// waste-hunter 13 · Load balancers with no backends
+// A Standard load balancer bills hourly for its rules even when no backend pool has a member. Basic
+// load balancers are free (and retired), so they're skipped. Inbound NAT rules pointing at a VM
+// count as in use. The frontend public IPs of an idle load balancer keep billing too; they show as
+// associated, so query 03 doesn't report them.
+// READ-ONLY. Run:  az graph query -q @13-idle-load-balancers.kql --first 1000
+resources
+| where type =~ 'microsoft.network/loadbalancers'
+| where tostring(sku.name) !~ 'Basic'
+| extend pools = tostring(properties.backendAddressPools), nat = tostring(properties.inboundNatRules)
+| extend hasMembers = pools matches regex '"(backendIPConfigurations|loadBalancerBackendAddresses)":\\[\\{'
+                      or nat matches regex '"backendIPConfiguration":\\{'
+| where not(hasMembers)
+| extend rules = coalesce(array_length(properties.loadBalancingRules), 0) + coalesce(array_length(properties.outboundRules), 0),
+         frontends = coalesce(array_length(properties.frontendIPConfigurations), 0)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = iff(rules > 0, 'high', 'low'),
+         reason = strcat('No backend pool members and no inbound NAT rule targets (', tostring(sku.name), ', ', rules, ' rule(s), ',
+                         frontends, ' frontend(s))',
+                         iff(rules == 0, '; no rules, so the load balancer itself is free (clutter only)', ''),
+                         iff(frontends > 0, '; its frontend public IPs also keep billing', ''))
+| project wasteType = 'idle-load-balancer', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = tostring(sku.name), tier = tostring(sku.tier), sizeGb = rules, os = '', extra = tostring(frontends),
+          confidence, reason, ignored

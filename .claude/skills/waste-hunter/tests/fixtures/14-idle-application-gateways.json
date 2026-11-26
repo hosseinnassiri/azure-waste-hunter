@@ -1,0 +1,27 @@
+[
+  {
+    "wasteType": "idle-application-gateway",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-web/providers/Microsoft.Network/applicationGateways/agw-legacy-portal",
+    "name": "agw-legacy-portal",
+    "type": "microsoft.network/applicationgateways",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-web",
+    "location": "westeurope",
+    "owner": "web@example.com",
+    "app": "",
+    "env": "prod",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "unknown (not exposed by Resource Graph)",
+    "sku": "WAF_v2",
+    "tier": "WAF_v2",
+    "sizeGb": 2,
+    "os": "",
+    "extra": "Running",
+    "confidence": "high",
+    "reason": "Every backend pool is empty (WAF_v2, min capacity 2)",
+    "ignored": 0
+  }
+]

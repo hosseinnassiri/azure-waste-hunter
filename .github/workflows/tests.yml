@@ -1,0 +1,31 @@
+name: tests
+
+# Offline test suite: synthetic fixtures, offline pricing. No Azure login, no secrets, no network calls.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: offline tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PowerShell version
+        shell: pwsh
+        run: |
+          $v = $PSVersionTable.PSVersion
+          "PowerShell $v"
+          if ($v -lt [version]'7.5') { throw "The runner needs PowerShell 7.5+ (ConvertFrom-Json -DateKind); this image has $v" }
+
+      - name: Run tests
+        shell: pwsh
+        run: ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1

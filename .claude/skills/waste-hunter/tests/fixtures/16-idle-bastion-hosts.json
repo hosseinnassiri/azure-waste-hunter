@@ -1,0 +1,58 @@
+[
+  {
+    "wasteType": "idle-bastion",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-net-dev/providers/Microsoft.Network/bastionHosts/bas-dev",
+    "name": "bas-dev",
+    "type": "microsoft.network/bastionhosts",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-net-dev",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "pending (metrics)",
+    "sku": "Standard",
+    "tier": "",
+    "sizeGb": 2,
+    "os": "",
+    "extra": "",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "scaleUnits": 2
+    }
+  },
+  {
+    "wasteType": "idle-bastion",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-net/providers/Microsoft.Network/bastionHosts/bas-prod",
+    "name": "bas-prod",
+    "type": "microsoft.network/bastionhosts",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-net",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "prod",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "pending (metrics)",
+    "sku": "Basic",
+    "tier": "",
+    "sizeGb": 2,
+    "os": "",
+    "extra": "",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "scaleUnits": 2
+    }
+  }
+]

@@ -1,0 +1,60 @@
+[
+  {
+    "wasteType": "idle-sql-database",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-data/providers/Microsoft.Sql/servers/sql-legacy/databases/reporting-old",
+    "name": "sql-legacy/reporting-old",
+    "type": "microsoft.sql/servers/databases",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-data",
+    "location": "eastus",
+    "owner": "data-team@example.com",
+    "app": "reporting",
+    "env": "prod",
+    "createdTime": "2025-10-22T22:55:01.4229984Z",
+    "ageDays": 400,
+    "idleDays": null,
+    "idleSource": "pending (metrics)",
+    "sku": "S3",
+    "tier": "Standard",
+    "sizeGb": 100,
+    "os": "",
+    "extra": "",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "vcores": 100,
+      "tier": "Standard"
+    }
+  },
+  {
+    "wasteType": "idle-sql-database",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-data/providers/Microsoft.Sql/servers/sql-app/databases/orders",
+    "name": "sql-app/orders",
+    "type": "microsoft.sql/servers/databases",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-data",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "",
+    "createdTime": "2025-10-22T22:55:01.4229984Z",
+    "ageDays": 400,
+    "idleDays": null,
+    "idleSource": "pending (metrics)",
+    "sku": "GP_Gen5",
+    "tier": "GeneralPurpose",
+    "sizeGb": 2,
+    "os": "",
+    "extra": "",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "vcores": 2,
+      "tier": "GeneralPurpose"
+    }
+  }
+]

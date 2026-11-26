@@ -1,0 +1,58 @@
+[
+  {
+    "wasteType": "premium-disk-deallocated-vm",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-legacy/providers/Microsoft.Compute/disks/vm-retired-app_OsDisk",
+    "name": "vm-retired-app_OsDisk",
+    "type": "microsoft.compute/disks",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-legacy",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "2025-07-14T22:55:01.4229984Z",
+    "ageDays": 500,
+    "idleDays": null,
+    "idleSource": "pending (VM CPU metrics)",
+    "sku": "Premium_LRS",
+    "tier": "P30",
+    "sizeGb": 1024,
+    "os": "Linux",
+    "extra": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-legacy/providers/Microsoft.Compute/virtualMachines/vm-retired-app",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "vmId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-legacy/providers/Microsoft.Compute/virtualMachines/vm-retired-app"
+    }
+  },
+  {
+    "wasteType": "premium-disk-deallocated-vm",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-build/providers/Microsoft.Compute/disks/vm-weekend-batch_data",
+    "name": "vm-weekend-batch_data",
+    "type": "microsoft.compute/disks",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-build",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "2025-07-14T22:55:01.4229984Z",
+    "ageDays": 500,
+    "idleDays": null,
+    "idleSource": "pending (VM CPU metrics)",
+    "sku": "Premium_LRS",
+    "tier": "P10",
+    "sizeGb": 128,
+    "os": "Linux",
+    "extra": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-weekend-batch",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "vmId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-weekend-batch"
+    }
+  }
+]

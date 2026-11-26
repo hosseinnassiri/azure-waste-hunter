@@ -80,12 +80,25 @@ Ask the user instead.
   `Query Count` need `--aggregation Count`. `StorageUsed` (ACR) and capacity metrics only take hourly
   grains, so don't combine them with daily metrics in one call. A dimension split (`--filter
   "X eq '*'"`) returns no series at all for zero activity, which `Get-MetricStats` treats as 0.
+- An empty list from a pipeline can arrive in a function as a single `$null`. Filter nulls before
+  reading properties (`Format-GroupCost` crashed on a second scan with nothing resolved).
+- Don't name helpers after built-in aliases: `h` is `Get-History` (the HTML escaper was `H`), and
+  aliases win over functions. Don't assign `$pid`, which is read-only.
+- Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise az
+  stderr or exit-code handling. Check those against a real login.
+- Load Balancer and NAT Gateway prices are published under `armRegionName` `Global` / `US Gov`,
+  not per region.
 - In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
   them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.
   That nests the array and turns every `Where-Object` into a match-all.
 
 ## Validating changes
+
+**Run the test suite before every commit.** It must pass:
+`pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` (offline, about 2 minutes; CI runs it
+too). A new waste type needs fixture cases it must flag and cases it must drop, plus an entry in the
+suite's expected finding set. A bug fix needs a test that fails without it.
 
 ```powershell
 # Synthetic, no Azure calls (live CAD prices from the Retail Prices API). Must produce a populated

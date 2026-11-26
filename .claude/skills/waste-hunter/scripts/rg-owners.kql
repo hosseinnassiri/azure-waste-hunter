@@ -1,0 +1,8 @@
+// waste-hunter owner fallback (not a waste type).
+// Owner tags of resource groups, used to route a finding whose resource has no owner tag of its own.
+// READ-ONLY.
+resourcecontainers
+| where type =~ 'microsoft.resources/subscriptions/resourcegroups'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy']))
+| where isnotempty(owner)
+| project subscriptionId, resourceGroup = tolower(name), owner

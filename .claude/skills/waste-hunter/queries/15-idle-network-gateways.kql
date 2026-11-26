@@ -1,0 +1,45 @@
+// waste-hunter 15 · Idle NAT, VPN and ExpressRoute gateways, and unprovisioned ExpressRoute circuits
+// All of these bill hourly or monthly whether or not traffic flows:
+//   - NAT gateway attached to no subnet
+//   - VPN or ExpressRoute virtual network gateway with no connections (and, for VPN, no point-to-site config)
+//   - ExpressRoute circuit the provider hasn't provisioned (billed from creation), or with no gateway connection
+// Gateways can take 30-45 minutes to recreate and are sometimes kept for DR, so they're medium confidence.
+// READ-ONLY. Run:  az graph query -q @15-idle-network-gateways.kql --first 1000
+resources
+| where type in~ ('microsoft.network/natgateways', 'microsoft.network/virtualnetworkgateways', 'microsoft.network/expressroutecircuits')
+| extend target = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.network/connections'
+    | mv-expand target = pack_array(tolower(tostring(properties.virtualNetworkGateway1.id)), tolower(tostring(properties.virtualNetworkGateway2.id)), tolower(tostring(properties.peer.id)))
+    | extend target = tostring(target)
+    | where isnotempty(target)
+    | summarize connections = count() by target
+  ) on target
+| extend connections = coalesce(connections, 0)
+| extend kind2 = case(type =~ 'microsoft.network/natgateways', 'nat',
+                      type =~ 'microsoft.network/expressroutecircuits', 'er-circuit',
+                      tostring(properties.gatewayType) =~ 'ExpressRoute', 'er-gateway', 'vpn-gateway'),
+         subnets = coalesce(array_length(properties.subnets), 0),
+         p2s = isnotempty(tostring(properties.vpnClientConfiguration.vpnClientAddressPool.addressPrefixes[0])),
+         providerState = tostring(properties.serviceProviderProvisioningState)
+| where (kind2 == 'nat' and subnets == 0)
+     or (kind2 == 'vpn-gateway' and connections == 0 and not(p2s))
+     or (kind2 == 'er-gateway' and connections == 0)
+     or (kind2 == 'er-circuit' and (providerState !~ 'Provisioned' or connections == 0))
+| extend skuName = case(kind2 == 'nat', tostring(sku.name), kind2 == 'er-circuit', tostring(sku.name), tostring(properties.sku.name))
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = iff(kind2 == 'nat' or (kind2 == 'er-circuit' and providerState !~ 'Provisioned'), 'high', 'medium'),
+         reason = case(kind2 == 'nat', 'NAT gateway is attached to no subnet; its public IPs keep billing too',
+                       kind2 == 'vpn-gateway', strcat('VPN gateway (', skuName, ') has no site-to-site or VNet-to-VNet connections and no point-to-site configuration'),
+                       kind2 == 'er-gateway', strcat('ExpressRoute gateway (', skuName, ') has no circuit connections'),
+                       providerState !~ 'Provisioned', strcat('ExpressRoute circuit (', skuName, ') is billed but the provider state is ', providerState),
+                       strcat('ExpressRoute circuit (', skuName, ') is provisioned but no gateway is connected to it'))
+| project wasteType = 'idle-network-gateway', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = skuName, tier = kind2, sizeGb = connections, os = '',
+          extra = iff(kind2 == 'er-circuit', strcat(tostring(properties.serviceProviderProperties.bandwidthInMbps), ' Mbps'), ''),
+          confidence, reason, ignored

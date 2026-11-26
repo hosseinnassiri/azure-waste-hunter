@@ -1,0 +1,17 @@
+// waste-hunter 16 · Idle Azure Bastion hosts (CANDIDATES, confirmed by metrics)
+// Basic, Standard and Premium Bastion bill hourly whether or not anyone connects. The free Developer
+// SKU is skipped. The runner flags a host with 0 sessions (the `sessions` metric) in 30 days.
+// READ-ONLY. Run:  az graph query -q @16-idle-bastion-hosts.kql --first 1000
+resources
+| where type =~ 'microsoft.network/bastionhosts'
+| where tostring(sku.name) !~ 'Developer'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend scaleUnits = toint(coalesce(properties.scaleUnits, 2))
+| project wasteType = 'idle-bastion', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(sku.name), tier = '', sizeGb = scaleUnits, os = '', extra = '',
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('scaleUnits', scaleUnits)

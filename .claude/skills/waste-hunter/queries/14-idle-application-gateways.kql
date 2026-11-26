@@ -1,0 +1,21 @@
+// waste-hunter 14 · Application Gateways with no backends
+// A running Application Gateway bills hourly (v2: fixed cost plus capacity units, v1: per instance)
+// even when every backend pool is empty. Stopped gateways cost nothing and are skipped.
+// READ-ONLY. Run:  az graph query -q @14-idle-application-gateways.kql --first 1000
+resources
+| where type =~ 'microsoft.network/applicationgateways'
+| where tostring(properties.operationalState) !~ 'Stopped'
+| extend pools = tostring(properties.backendAddressPools)
+| where not(pools matches regex '"(backendAddresses|backendIPConfigurations)":\\[\\{')
+| extend skuName = tostring(properties.sku.name), skuTier = tostring(properties.sku.tier),
+         minCapacity = toint(coalesce(properties.autoscaleConfiguration.minCapacity, properties.sku.capacity, 0))
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-application-gateway', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = skuName, tier = skuTier, sizeGb = minCapacity, os = '', extra = tostring(properties.operationalState),
+          confidence = 'high',
+          reason = strcat('Every backend pool is empty (', skuTier, ', min capacity ', minCapacity, ')'),
+          ignored

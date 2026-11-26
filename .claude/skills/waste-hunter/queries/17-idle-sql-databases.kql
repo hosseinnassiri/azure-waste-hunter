@@ -1,0 +1,25 @@
+// waste-hunter 17 · Idle Azure SQL databases (CANDIDATES, confirmed by metrics)
+// A provisioned SQL database bills for compute every hour, connected or not. Skipped: master,
+// databases in an elastic pool (the pool is billed, not the database), paused data warehouses, and
+// serverless databases with auto-pause on (they stop billing compute when idle).
+// The runner flags a database with 0 successful connections in 30 days.
+// READ-ONLY. Run:  az graph query -q @17-idle-sql-databases.kql --first 1000
+resources
+| where type =~ 'microsoft.sql/servers/databases'
+| where name !~ 'master'
+| where isempty(tostring(properties.elasticPoolId))
+| where tostring(properties.status) !~ 'Paused'
+| extend skuName = tostring(sku.name), skuTier = tostring(sku.tier), vcores = toint(sku.capacity),
+         autoPause = toint(properties.autoPauseDelay)
+| where not(skuName contains '_S_' and autoPause > 0)
+| extend createdTime = todatetime(properties.creationDate)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-sql-database', id, name = strcat(tostring(split(id, '/')[8]), '/', name), type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = skuName, tier = skuTier, sizeGb = vcores, os = '', extra = tostring(properties.licenseType),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('vcores', vcores, 'tier', skuTier)

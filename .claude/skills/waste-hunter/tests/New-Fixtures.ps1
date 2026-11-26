@@ -189,6 +189,68 @@ function Dep($name, $sku, [int] $cap, $model, [int] $ageD) { @{ name = $name; sk
     (Dep 'gpt-ptu-prod' 'ProvisionedManaged' 100 'gpt-4o' 300)) } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Out 'deployments.json') -Encoding utf8
 Set-Metric $oaiRow.id 'AzureOpenAIRequests' 'total' @(@{ split = 'gpt-ptu-prod'; value = 910000 }, @{ split = 'gpt-4o-chat'; value = 45000 })
 
+# ---- Phase 3: networking, Bastion, SQL, premium disks on deallocated VMs, empty resource groups
+$unk = @{ idleSource = 'unknown (not exposed by Resource Graph)' }
+$lbT = 'Microsoft.Network/loadBalancers'
+Save '13-idle-load-balancers.json' @(
+    (Row 'idle-load-balancer' $P 'rg-web' $lbT 'lb-old-web' 'eastus' (@{ owner = 'web@example.com'; env = 'prod'; sku = 'Standard'; tier = 'Regional'; sizeGb = 3; extra = '1'
+        reason = 'No backend pool members and no inbound NAT rule targets (Standard, 3 rule(s), 1 frontend(s)); its frontend public IPs also keep billing' } + $unk)),
+    (Row 'idle-load-balancer' $D 'rg-sandbox' $lbT 'lb-empty-scratch' 'eastus' (@{ sku = 'Standard'; tier = 'Regional'; sizeGb = 0; extra = '0'; confidence = 'low'
+        reason = 'No backend pool members and no inbound NAT rule targets (Standard, 0 rule(s), 0 frontend(s)); no rules, so the load balancer itself is free (clutter only)' } + $unk)))
+Save '14-idle-application-gateways.json' @(
+    (Row 'idle-application-gateway' $P 'rg-web' 'Microsoft.Network/applicationGateways' 'agw-legacy-portal' 'westeurope' (@{ owner = 'web@example.com'; env = 'prod'
+        sku = 'WAF_v2'; tier = 'WAF_v2'; sizeGb = 2; extra = 'Running'; reason = 'Every backend pool is empty (WAF_v2, min capacity 2)' } + $unk)))
+Save '15-idle-network-gateways.json' @(
+    (Row 'idle-network-gateway' $D 'rg-net-dev' 'Microsoft.Network/natGateways' 'nat-dev-unused' 'eastus' (@{ env = 'dev'; sku = 'Standard'; tier = 'nat'; sizeGb = 0
+        reason = 'NAT gateway is attached to no subnet; its public IPs keep billing too' } + $unk)),
+    (Row 'idle-network-gateway' $P 'rg-net' 'Microsoft.Network/virtualNetworkGateways' 'vpngw-old-branch' 'eastus' (@{ owner = 'netops@example.com'; env = 'prod'; sku = 'VpnGw2'; tier = 'vpn-gateway'; sizeGb = 0
+        confidence = 'medium'; reason = 'VPN gateway (VpnGw2) has no site-to-site or VNet-to-VNet connections and no point-to-site configuration' } + $unk)),
+    (Row 'idle-network-gateway' $P 'rg-net' 'Microsoft.Network/expressRouteCircuits' 'erc-pending-dc2' 'eastus' (@{ owner = 'netops@example.com'; sku = 'Standard_MeteredData'; tier = 'er-circuit'; sizeGb = 0; extra = '1000 Mbps'
+        reason = 'ExpressRoute circuit (Standard_MeteredData) is billed but the provider state is NotProvisioned' } + $unk)))
+
+$basT = 'Microsoft.Network/bastionHosts'
+$basDev  = Row 'idle-bastion' $D 'rg-net-dev' $basT 'bas-dev' 'eastus' @{ env = 'dev'; sku = 'Standard'; sizeGb = 2; confidence = 'pending'; idleSource = 'pending (metrics)' }
+$basProd = Row 'idle-bastion' $P 'rg-net' $basT 'bas-prod' 'eastus' @{ env = 'prod'; sku = 'Basic'; sizeGb = 2; confidence = 'pending'; idleSource = 'pending (metrics)' }
+foreach ($b in $basDev, $basProd) { $b.checkInputs = [ordered]@{ scaleUnits = 2 } }
+Save '16-idle-bastion-hosts.json' @($basDev, $basProd)
+Set-Metric $basDev.id 'sessions' 'total' @()                          # 0 sessions: no series
+Set-Metric $basProd.id 'sessions' 'total' @(@{ value = 40 })
+
+$sqlT = 'Microsoft.Sql/servers/databases'
+function SQLDB($sub, $rg, $server, $db, $sku, $tierName, [int] $vc, [hashtable] $x = @{}) {
+    $r = Row 'idle-sql-database' $sub $rg 'Microsoft.Sql/servers' "$server/databases/$db" 'eastus' (@{ sku = $sku; tier = $tierName; sizeGb = $vc; createdTime = (Ago 400); ageDays = 400; confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.name = "$server/$db"; $r.type = 'microsoft.sql/servers/databases'
+    $r.checkInputs = [ordered]@{ vcores = $vc; tier = $tierName }
+    $r
+}
+$sqlIdle = SQLDB $P 'rg-data' 'sql-legacy' 'reporting-old' 'S3' 'Standard' 100 @{ owner = 'data-team@example.com'; app = 'reporting'; env = 'prod' }
+$sqlBusy = SQLDB $P 'rg-data' 'sql-app' 'orders' 'GP_Gen5' 'GeneralPurpose' 2
+Save '17-idle-sql-databases.json' @($sqlIdle, $sqlBusy)
+Set-Metric $sqlIdle.id 'connection_successful' 'total' @()
+Set-Metric $sqlBusy.id 'connection_successful' 'total' @(@{ value = 5200 })
+
+$vmRetired = Rid $D 'rg-legacy' $vm 'vm-retired-app'
+$vmWeekend = Rid $D 'rg-build' $vm 'vm-weekend-batch'
+function PDisk($name, $vmIdArg, $tierName, [int] $gb) {
+    $r = Row 'premium-disk-deallocated-vm' $D (($vmIdArg -split '/')[4]) $disk $name 'eastus' @{ env = 'dev'; sku = 'Premium_LRS'; tier = $tierName; sizeGb = $gb; os = 'Linux'; extra = $vmIdArg
+        createdTime = (Ago 500); ageDays = 500; confidence = 'pending'; idleSource = 'pending (VM CPU metrics)' }
+    $r.checkInputs = [ordered]@{ vmId = $vmIdArg }
+    $r
+}
+Save '18-premium-disks-on-deallocated-vms.json' @((PDisk 'vm-retired-app_OsDisk' $vmRetired 'P30' 1024), (PDisk 'vm-weekend-batch_data' $vmWeekend 'P10' 128))
+# vm-retired-app: no CPU data at all (90+ days off). vm-weekend-batch: ran 10 days ago, so dropped.
+$metrics[$vmWeekend.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = @(@{ timeStamp = $now.AddDays(-10).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 61.0 }) }) }) }
+
+$rgRow = Row 'empty-resource-group' $D 'rg-old-poc' 'x' 'x' 'eastus' (@{ env = 'dev'; confidence = 'medium'; reason = 'Resource group contains no resources indexed by Resource Graph' } + $unk)
+$rgRow.id = "/subscriptions/$D/resourceGroups/rg-old-poc"; $rgRow.name = 'rg-old-poc'; $rgRow.type = 'microsoft.resources/subscriptions/resourcegroups'
+Save '19-empty-resource-groups.json' @($rgRow)
+
+# Resource group owner tags: the fallback owner for findings whose resource has no owner tag
+Save 'rg-owners.json' @(
+    @{ subscriptionId = $D; resourceGroup = 'rg-legacy'; owner = 'legacy-team@example.com' },
+    @{ subscriptionId = $P; resourceGroup = 'rg-web'; owner = 'web@example.com' },
+    @{ subscriptionId = $D; resourceGroup = 'rg-sandbox'; owner = 'sandbox@example.com' })
+
 # CPU metrics: build agent last ran 47 days ago (so the 2nd 30-day window has data); jumpbox has none
 $pts = @(for ($i = 60; $i -ge 47; $i--) { @{ timeStamp = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 35.5 } })
 $metrics[$vmBuild.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) }

@@ -1,0 +1,21 @@
+// waste-hunter 18 · Premium disks on VMs deallocated for weeks (CANDIDATES, confirmed by metrics)
+// diskState 'Reserved' means attached to a deallocated VM. Deallocating stops compute billing, but a
+// Premium SSD keeps billing at its full tier. While the VM stays off, the same tier on Standard SSD
+// (P10 -> E10) costs much less. The runner confirms the VM has had no CPU activity for 30+ days.
+// READ-ONLY. Run:  az graph query -q @18-premium-disks-on-deallocated-vms.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/disks'
+| where tostring(properties.diskState) =~ 'Reserved'
+| where tostring(sku.name) startswith 'Premium'
+| extend vmId = tostring(managedBy)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend createdTime = todatetime(properties.timeCreated)
+| project wasteType = 'premium-disk-deallocated-vm', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays = toint((now() - createdTime) / 1d), idleDays = int(null), idleSource = 'pending (VM CPU metrics)',
+          sku = tostring(sku.name), tier = tostring(properties.tier), sizeGb = toint(properties.diskSizeGB),
+          os = tostring(properties.osType), extra = vmId,
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('vmId', vmId)

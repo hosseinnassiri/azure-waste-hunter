@@ -1,0 +1,27 @@
+[
+  {
+    "wasteType": "empty-resource-group",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-old-poc",
+    "name": "rg-old-poc",
+    "type": "microsoft.resources/subscriptions/resourcegroups",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-old-poc",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "unknown (not exposed by Resource Graph)",
+    "sku": "",
+    "tier": "",
+    "sizeGb": null,
+    "os": "",
+    "extra": "",
+    "confidence": "medium",
+    "reason": "Resource group contains no resources indexed by Resource Graph",
+    "ignored": 0
+  }
+]

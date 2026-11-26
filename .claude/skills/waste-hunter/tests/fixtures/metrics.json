@@ -596,6 +596,82 @@
       }
     ]
   },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-net-dev/providers/microsoft.network/bastionhosts/bas-dev|sessions": {
+    "value": [
+      {
+        "name": {
+          "value": "sessions"
+        },
+        "timeseries": []
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-net/providers/microsoft.network/bastionhosts/bas-prod|sessions": {
+    "value": [
+      {
+        "name": {
+          "value": "sessions"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 40,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-data/providers/microsoft.sql/servers/sql-legacy/databases/reporting-old|connection_successful": {
+    "value": [
+      {
+        "name": {
+          "value": "connection_successful"
+        },
+        "timeseries": []
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-data/providers/microsoft.sql/servers/sql-app/databases/orders|connection_successful": {
+    "value": [
+      {
+        "name": {
+          "value": "connection_successful"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 5200,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-build/providers/microsoft.compute/virtualmachines/vm-weekend-batch": {
+    "value": [
+      {
+        "timeseries": [
+          {
+            "data": [
+              {
+                "maximum": 61.0,
+                "timeStamp": "2026-11-16T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-build/providers/microsoft.compute/virtualmachines/vm-build-agent-02": {
     "value": [
       {
@@ -603,60 +679,60 @@
           {
             "data": [
               {
-                "timeStamp": "2026-09-27T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-09-27T00:00:00Z"
               },
               {
-                "timeStamp": "2026-09-28T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-09-28T00:00:00Z"
               },
               {
-                "timeStamp": "2026-09-29T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-09-29T00:00:00Z"
               },
               {
-                "timeStamp": "2026-09-30T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-09-30T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-01T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-01T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-02T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-02T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-03T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-03T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-04T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-04T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-05T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-05T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-06T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-06T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-07T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-07T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-08T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-08T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-09T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-09T00:00:00Z"
               },
               {
-                "timeStamp": "2026-10-10T00:00:00Z",
-                "maximum": 35.5
+                "maximum": 35.5,
+                "timeStamp": "2026-10-10T00:00:00Z"
               }
             ]
           }
