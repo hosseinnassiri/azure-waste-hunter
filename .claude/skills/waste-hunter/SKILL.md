@@ -64,7 +64,7 @@ and a suggested action (text only).
 | # | Query | Detects | Confidence |
 |---|---|---|---|
 | 1 | `01-unattached-disks.kql` | `diskState == Unattached` | high if idle 30 days or more; medium 7–29 days; low under 7 days or an ASR replica/seed disk |
-| 2 | `02-orphaned-nics.kql` | NIC with no VM, private endpoint, private link service or hosted workload | high; medium in platform-managed RGs (`MC_*`, `databricks-rg*`, `managedBy`). Cost $0. A public IP it holds is costed under #3 |
+| 2 | `02-orphaned-nics.kql` | NIC with no VM, private endpoint, private link service or hosted workload | high; medium in platform-managed RGs (`MC_*`, `databricks-rg*`, `managedBy`). NICs themselves are free. A public IP it holds is costed under #3 |
 | 3 | `03-unassociated-public-ips.kql` | no ipConfiguration and no NAT gateway, **or** attached only to an orphaned NIC | high; low for Basic dynamic and unassociated (no charge) |
 | 4 | `04-empty-app-service-plans.kql` | `numberOfSites == 0` and no `microsoft.web/sites` points at it | high; low for Free, Shared, Consumption and Flex Consumption (no charge) |
 | 5 | `05-vms-stopped-not-deallocated.kql` | `PowerState/stopped` | high. Idle time is the last non-zero CPU datapoint from 90 days of Azure Monitor metrics |

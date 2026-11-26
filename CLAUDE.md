@@ -54,6 +54,8 @@ Ask the user instead.
 - `az consumption usage list` returns cost-less legacy-schema records for some billing types
   (e.g. this author's Visual Studio subscriptions). The runner detects this, warns, and falls back to
   Advisor or list-price estimates.
+- In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
+  them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.
   That nests the array and turns every `Where-Object` into a match-all.
 
