@@ -1,0 +1,30 @@
+// waste-hunter 04 · Empty App Service plans (no apps)
+// A paid App Service plan is billed per instance even with no apps on it. A plan counts as
+// empty when properties.numberOfSites == 0, cross-checked against microsoft.web/sites in Resource
+// Graph. Free, Shared, Consumption and Flex Consumption plans cost nothing empty, so they are low priority.
+// READ-ONLY. Run:  az graph query -q @04-empty-app-service-plans.kql --first 1000
+resources
+| where type =~ 'microsoft.web/serverfarms'
+| extend planId = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.web/sites'
+    | summarize sitesInGraph = count() by planId = tolower(tostring(properties.serverFarmId))
+  ) on planId
+| extend numberOfSites = toint(properties.numberOfSites),
+         sitesInGraph  = coalesce(sitesInGraph, 0)
+| where (numberOfSites == 0 or isnull(numberOfSites)) and sitesInGraph == 0
+| extend skuName = tostring(sku.name), skuTier = tostring(sku.tier), workers = toint(sku.capacity)
+| extend isFree = skuTier in~ ('Free', 'Shared', 'Dynamic', 'FlexConsumption') or skuName in~ ('F1', 'D1', 'Y1', 'FC1')
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = iff(isFree, 'low', 'high'),
+         reason = strcat('Plan hosts 0 apps (', skuTier, ' ', skuName, ' x', coalesce(workers, 1), ' instance(s))',
+                         iff(isFree, '; free/consumption tier, no charge while empty', ''))
+| project wasteType = 'empty-app-service-plan', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = skuName, tier = skuTier, sizeGb = coalesce(workers, 1),
+          os = iff(tobool(properties.reserved), 'Linux', 'Windows'), extra = kind,
+          confidence, reason, ignored

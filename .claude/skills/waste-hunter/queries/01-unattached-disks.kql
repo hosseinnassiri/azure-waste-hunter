@@ -1,0 +1,27 @@
+// waste-hunter 01 · Unattached managed disks
+// A managed disk with diskState 'Unattached' is billed for its full provisioned tier
+// whether or not anything uses it.
+// Idle time comes from LastOwnershipUpdateTime (when it was last detached), falling back to timeCreated.
+// READ-ONLY. Run:  az graph query -q @01-unattached-disks.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/disks'
+| where tostring(properties.diskState) =~ 'Unattached'
+| extend createdTime  = todatetime(properties.timeCreated),
+         detachedTime = todatetime(properties.LastOwnershipUpdateTime)
+| extend ageDays    = toint((now() - createdTime) / 1d),
+         idleDays   = iff(isnull(detachedTime), toint((now() - createdTime) / 1d), toint((now() - detachedTime) / 1d)),
+         idleSource = iff(isnull(detachedTime), 'timeCreated (detach time unknown)', 'LastOwnershipUpdateTime')
+| extend isAsr = name startswith 'asrseeddisk' or tostring(tags) contains 'ASR-ReplicaDisk'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = case(isAsr, 'low', idleDays >= 30, 'high', idleDays >= 7, 'medium', 'low'),
+         reason = strcat('Unattached for ', idleDays, ' days (', idleSource, ')',
+                         iff(isAsr, '; looks like an Azure Site Recovery replica/seed disk', ''),
+                         iff(idleDays < 7, '; recently detached, may be mid-redeploy', ''))
+| project wasteType = 'unattached-disk', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays, idleSource,
+          sku = tostring(sku.name), tier = tostring(properties.tier), sizeGb = toint(properties.diskSizeGB),
+          os = tostring(properties.osType), extra = tostring(properties.networkAccessPolicy),
+          confidence, reason, ignored

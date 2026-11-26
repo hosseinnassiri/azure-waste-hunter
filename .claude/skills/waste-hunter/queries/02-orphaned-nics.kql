@@ -1,0 +1,28 @@
+// waste-hunter 02 · Orphaned network interfaces (no VM attached)
+// NICs are free, but orphans hold private IPs and NSG associations, and can keep a
+// billed public IP alive. That public IP is reported (and costed) by query 03, not here.
+// Skips NICs owned by private endpoints, private link services and service-injected workloads.
+// Resource Graph has no creation time for NICs, so age is unknown.
+// READ-ONLY. Run:  az graph query -q @02-orphaned-nics.kql --first 1000
+resources
+| where type =~ 'microsoft.network/networkinterfaces'
+| where isempty(tostring(properties.virtualMachine.id))
+| where isempty(tostring(properties.privateEndpoint.id)) and isempty(tostring(properties.privateLinkService.id))
+| extend hostedWorkloads = array_length(properties.hostedWorkloads)
+| where isnull(hostedWorkloads) or hostedWorkloads == 0
+| extend hasPublicIp = tostring(properties.ipConfigurations) contains '/publicIPAddresses/',
+         hasNsg      = isnotempty(tostring(properties.networkSecurityGroup.id)),
+         isManaged   = isnotempty(managedBy) or resourceGroup startswith 'mc_' or resourceGroup startswith 'databricks-rg'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = iff(isManaged, 'medium', 'high'),
+         reason = strcat('No VM, private endpoint or private link service attached',
+                         iff(hasPublicIp, '; still holds a public IP (see unassociated public IPs)', ''),
+                         iff(hasNsg, '; has an NSG association', ''),
+                         iff(isManaged, '; lives in a platform-managed resource group, check the owning service first', ''))
+| project wasteType = 'orphaned-nic', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = '', tier = '', sizeGb = int(null), os = '', extra = iff(hasPublicIp, 'holds-public-ip', ''),
+          confidence, reason, ignored

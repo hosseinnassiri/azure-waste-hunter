@@ -1,0 +1,36 @@
+// waste-hunter 03 · Unassociated public IP addresses
+// Matches public IPs with no ipConfiguration and no NAT gateway, plus public IPs whose only
+// association is an orphaned NIC (one with no VM). Standard and static IPs are billed hourly
+// even when unused. A Basic dynamic IP that is unassociated has no address and costs nothing.
+// Resource Graph has no creation time for public IPs, so age is unknown.
+// READ-ONLY. Run:  az graph query -q @03-unassociated-public-ips.kql --first 1000
+resources
+| where type =~ 'microsoft.network/publicipaddresses'
+| extend ipConfigId = tolower(tostring(properties.ipConfiguration.id)),
+         natId      = tostring(properties.natGateway.id)
+| extend nicId = extract('^(/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft.network/networkinterfaces/[^/]+)/', 1, ipConfigId)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.network/networkinterfaces'
+    | project nicId = tolower(id), nicVm = tostring(properties.virtualMachine.id), nicPe = tostring(properties.privateEndpoint.id)
+  ) on nicId
+| extend unassociated = isempty(ipConfigId) and isempty(natId),
+         onOrphanNic  = isnotempty(nicId) and isnotempty(nicId1) and isempty(nicVm) and isempty(nicPe)
+| where unassociated or onOrphanNic
+| extend skuName    = tostring(sku.name),
+         allocation = tostring(properties.publicIPAllocationMethod),
+         hasDns     = isnotempty(tostring(properties.dnsSettings.fqdn))
+| extend isFree = skuName =~ 'Basic' and allocation =~ 'Dynamic' and unassociated
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = iff(isFree, 'low', 'high'),
+         reason = strcat(iff(unassociated, 'Not associated with any resource', 'Associated only with an orphaned NIC (no VM)'),
+                         ' (', skuName, ' / ', allocation, ')',
+                         iff(isFree, '; Basic dynamic and unassociated, so no charge, clutter only', ''),
+                         iff(hasDns, '; has a DNS label, releasing it frees the FQDN', ''))
+| project wasteType = 'unassociated-public-ip', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = skuName, tier = tostring(sku.tier), sizeGb = int(null), os = '', extra = allocation,
+          confidence, reason, ignored

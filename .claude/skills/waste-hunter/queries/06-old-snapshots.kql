@@ -1,0 +1,38 @@
+// waste-hunter 06 · Disk snapshots older than 90 days
+// Snapshots are billed per GiB stored. Confidence depends on context:
+//   high   = over 365 days old and the source disk still exists (a stale point-in-time copy)
+//   medium = 90 to 365 days old
+//   low    = source disk deleted (may be the only copy of the data) or managed by Azure Backup
+// READ-ONLY. Run:  az graph query -q @06-old-snapshots.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/snapshots'
+| extend createdTime = todatetime(properties.timeCreated)
+| where createdTime < ago(90d)
+| extend sourceId = tolower(tostring(properties.creationData.sourceResourceId))
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.compute/disks'
+    | project sourceId = tolower(id), sourceDiskState = tostring(properties.diskState)
+  ) on sourceId
+| extend ageDays      = toint((now() - createdTime) / 1d),
+         sourceExists = isnotempty(sourceId1),
+         isBackup     = resourceGroup startswith 'azurebackuprg' or tostring(tags) contains 'AzureBackup',
+         incremental  = tobool(properties.incremental)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend confidence = case(isBackup or (isnotempty(sourceId) and not(sourceExists)), 'low',
+                           ageDays >= 365 and sourceExists, 'high',
+                           'medium'),
+         reason = strcat('Snapshot is ', ageDays, ' days old',
+                         iff(incremental, ' (incremental)', ' (full)'),
+                         case(isempty(sourceId), '; source unknown',
+                              sourceExists, '; source disk still exists',
+                              '; source disk was deleted, may be the only copy'),
+                         iff(isBackup, '; appears to be managed by Azure Backup retention', ''))
+| project wasteType = 'old-snapshot', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = ageDays, idleSource = 'timeCreated',
+          sku = tostring(sku.name), tier = iff(incremental, 'incremental', 'full'), sizeGb = toint(properties.diskSizeGB),
+          os = tostring(properties.osType), extra = sourceId,
+          confidence, reason, ignored

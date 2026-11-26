@@ -1,0 +1,40 @@
+// waste-hunter 07 · Azure Advisor cost recommendations
+// Pulled from the advisorresources table, so every subscription in scope comes back in one query.
+// Dismissed, postponed and completed recommendations are skipped.
+// The runner merges any recommendation whose impacted resource matches a 01-06 finding into that
+// finding, so nothing is listed twice. Only unmatched recommendations become separate findings.
+// Joined to resources for tags and location, so the ignore tag on the impacted resource applies.
+// savingsAmount is Advisor's monthly figure; annualSavingsAmount / 12 is the fallback.
+// READ-ONLY. Run:  az graph query -q @07-advisor-cost.kql --first 1000
+advisorresources
+| where type =~ 'microsoft.advisor/recommendations'
+| where tostring(properties.category) =~ 'Cost'
+| extend status = tostring(properties.recommendationStatus)
+| where status !in~ ('Dismissed', 'Postponed', 'Completed')
+| extend recommendationId = id,
+         impactedId = tolower(tostring(properties.resourceMetadata.resourceId))
+| join kind=leftouter (
+    resources
+    | project impactedId = tolower(id), rTags = tags, rLocation = location, rType = type, rName = name
+  ) on impactedId
+| extend tags = rTags
+| extend savings = todouble(properties.extendedProperties.savingsAmount),
+         annual  = todouble(properties.extendedProperties.annualSavingsAmount),
+         impact  = tostring(properties.impact)
+| extend monthlySavings = iff(isnotnull(savings), savings, annual / 12)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'advisor-cost', id = impactedId, recommendationId,
+          name = coalesce(rName, tostring(properties.impactedValue)),
+          type = coalesce(rType, tolower(tostring(properties.impactedField))),
+          tenantId, subscriptionId, resourceGroup, location = coalesce(rLocation, location),
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null),
+          idleSource = strcat('Advisor last updated ', tostring(properties.lastUpdated)),
+          sku = tostring(properties.recommendationTypeId), tier = impact, sizeGb = int(null), os = '',
+          extra = tostring(properties.shortDescription.solution),
+          monthlySavings, currency = tostring(properties.extendedProperties.savingsCurrency),
+          confidence = case(impact =~ 'High', 'high', impact =~ 'Medium', 'medium', 'low'),
+          reason = strcat('Advisor (', impact, ' impact): ', tostring(properties.shortDescription.problem)),
+          ignored

@@ -1,0 +1,8 @@
+// waste-hunter coverage check (not a waste type).
+// Lists the subscriptions Resource Graph can actually see for this scope. Resource Graph silently
+// drops subscriptions the current token can't read, so "0 findings" only means something when every
+// expected subscription shows up here.
+// READ-ONLY.
+resourcecontainers
+| where type =~ 'microsoft.resources/subscriptions'
+| project subscriptionId, name

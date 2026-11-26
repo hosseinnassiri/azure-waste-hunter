@@ -1,0 +1,47 @@
+{
+  "_about": "Fallback list prices, used only when no billed cost (Consumption API) and no Advisor figure exist. Approximate USD pay-as-you-go monthly prices (730 h), US East-ish. Regional and negotiated rates differ, which is why the report labels these 'estimated'. Edit freely.",
+  "currency": "USD",
+  "hoursPerMonth": 730,
+
+  "disks": {
+    "_about": "Monthly price per performance tier. A disk is billed at its tier; if properties.tier is missing, the tier comes from its size.",
+    "tierSizesGb": [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32767],
+    "Premium_LRS":     { "prefix": "P", "tiers": ["P1","P2","P3","P4","P6","P10","P15","P20","P30","P40","P50","P60","P70","P80"],
+                         "prices": [0.77, 1.54, 3.01, 5.28, 10.21, 19.71, 37.96, 73.22, 135.17, 259.05, 495.57, 946.08, 1802.24, 3440.64] },
+    "StandardSSD_LRS": { "prefix": "E", "tiers": ["E1","E2","E3","E4","E6","E10","E15","E20","E30","E40","E50","E60","E70","E80"],
+                         "prices": [0.30, 0.60, 1.20, 2.40, 4.80, 9.60, 19.20, 38.40, 76.80, 153.60, 307.20, 614.40, 1228.80, 2457.60] },
+    "Standard_LRS":    { "prefix": "S", "tiers": ["S4","S4","S4","S4","S6","S10","S15","S20","S30","S40","S50","S60","S70","S80"],
+                         "prices": [1.54, 1.54, 1.54, 1.54, 3.01, 5.89, 11.33, 21.76, 40.96, 77.83, 143.36, 262.14, 524.29, 1048.58] },
+    "zrsMultiplier": 1.5,
+    "perGbFallback": { "PremiumV2_LRS": 0.0812, "UltraSSD_LRS": 0.12, "default": 0.075 }
+  },
+
+  "snapshotsPerGb": {
+    "_about": "Snapshots are billed on the GiB actually used. Resource Graph only exposes provisioned size, so these estimates are an upper bound.",
+    "Standard_LRS": 0.05, "Standard_ZRS": 0.0625, "Premium_LRS": 0.12, "default": 0.05
+  },
+
+  "publicIps": {
+    "Standard": 3.65,
+    "Basic|Static": 2.63,
+    "Basic|Dynamic": 0
+  },
+
+  "appServicePlans": {
+    "_about": "Monthly price per instance. Free, shared and consumption tiers are 0.",
+    "free": ["F1", "D1", "Y1", "FC1", "Free", "Shared", "Dynamic", "FlexConsumption"],
+    "Linux":   { "B1": 13.14, "B2": 26.28, "B3": 52.56, "S1": 69.35, "S2": 138.70, "S3": 277.40,
+                 "P1v2": 83.22, "P2v2": 166.44, "P3v2": 332.88, "P0v3": 62.05, "P1v3": 124.10, "P2v3": 248.20, "P3v3": 496.40,
+                 "P1mv3": 167.90, "P2mv3": 335.80, "EP1": 142.35, "EP2": 284.70, "EP3": 569.40, "I1v2": 306.60, "I2v2": 613.20, "I3v2": 1226.40 },
+    "Windows": { "B1": 54.75, "B2": 109.50, "B3": 219.00, "S1": 73.00, "S2": 146.00, "S3": 292.00,
+                 "P1v2": 146.00, "P2v2": 292.00, "P3v2": 584.00, "P0v3": 109.50, "P1v3": 219.00, "P2v3": 438.00, "P3v3": 876.00,
+                 "P1mv3": 262.80, "P2mv3": 525.60, "EP1": 142.35, "EP2": 284.70, "EP3": 569.40, "I1v2": 412.45, "I2v2": 824.90, "I3v2": 1649.80 }
+  },
+
+  "vms": {
+    "_about": "Hourly price per vCPU by size family (Linux). vCPU count comes from the size name, e.g. Standard_D4s_v5 = 4. Windows adds windowsPerVcpuHour unless licenseType is Windows_Server (Azure Hybrid Benefit).",
+    "perVcpuHourByFamily": { "B": 0.0208, "A": 0.05, "D": 0.048, "E": 0.063, "F": 0.0423, "L": 0.078, "M": 0.22, "H": 0.10, "N": 0.90, "G": 0.15 },
+    "defaultPerVcpuHour": 0.05,
+    "windowsPerVcpuHour": 0.046
+  }
+}

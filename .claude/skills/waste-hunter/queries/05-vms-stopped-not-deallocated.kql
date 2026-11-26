@@ -1,0 +1,23 @@
+// waste-hunter 05 · VMs stopped but not deallocated
+// 'PowerState/stopped' means the OS was shut down but the host is still reserved, so compute is
+// billed at the full rate. Only 'PowerState/deallocated' stops compute billing.
+// Idle time is not in Resource Graph. The runner gets it from the last Percentage CPU datapoint
+// (az monitor metrics list). Uniform scale set instances are not covered here.
+// READ-ONLY. Run:  az graph query -q @05-vms-stopped-not-deallocated.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| extend powerState = tostring(properties.extended.instanceView.powerState.code)
+| where powerState =~ 'PowerState/stopped'
+| extend createdTime = todatetime(properties.timeCreated)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'vm-stopped-not-deallocated', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (CPU metrics)',
+          sku = tostring(properties.hardwareProfile.vmSize), tier = tostring(properties.priority), sizeGb = int(null),
+          os = tostring(properties.storageProfile.osDisk.osType), extra = tostring(properties.licenseType),
+          confidence = 'high',
+          reason = 'Power state is Stopped (not deallocated), so compute is still billed',
+          ignored
