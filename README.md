@@ -79,6 +79,11 @@ In order of preference, with the source shown per finding:
 Works in every region. Portal links follow Azure Government and Azure China, and regional prices cover
 the public cloud and US Gov.
 
+Billed and Advisor amounts keep their own currency, so a report can mix currencies (for example
+`1,036.68 USD + 376.96 CAD`). Amounts are never added across currencies, but findings are **ranked**
+after converting to `-Currency` at the exchange rate implied by Microsoft's price list, and the
+report states that rate.
+
 ## Safety
 
 - Every `az` call in the runner goes through an allow list: `graph query`, `monitor metrics list`,

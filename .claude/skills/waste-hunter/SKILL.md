@@ -101,7 +101,10 @@ Advisor recommendations on that resource. The report shows how many were exclude
 4. **free**: NICs, free-tier plans and unassociated Basic dynamic IPs cost nothing.
 
 Billed and Advisor amounts keep their own currency. If it differs from `-Currency`, the total is shown
-per currency (for example `120.00 CAD + 35.00 USD`). Never add the parts together.
+per currency (for example `120.00 CAD + 35.00 USD`). Never add the parts together. For **ranking
+only**, mixed-currency amounts are converted to `-Currency` at the exchange rate implied by
+Microsoft's price list; the report states the rate. If no rate is available, the report warns that
+the order between currencies is approximate.
 
 ## Output
 

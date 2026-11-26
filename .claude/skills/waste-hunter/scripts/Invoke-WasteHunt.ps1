@@ -95,11 +95,12 @@ function Invoke-PriceApi([string] $Url) {
     }
 }
 
-# Matching price items (Consumption only). Returns elements, not a nested array.
-function Get-RetailItems([string] $Filter) {
-    if ($PriceCache.ContainsKey($Filter)) { return $PriceCache[$Filter] }
+# Matching price items (Consumption only), priced in $Cur. Returns elements, not a nested array.
+function Get-RetailItems([string] $Filter, [string] $Cur = $Currency) {
+    $cacheKey = "$Cur|$Filter"
+    if ($PriceCache.ContainsKey($cacheKey)) { return $PriceCache[$cacheKey] }
     if ($script:PriceApiDown) { return }
-    $url = "${PriceApi}?currencyCode='$Currency'&`$filter=" + [uri]::EscapeDataString("$Filter and priceType eq 'Consumption'")
+    $url = "${PriceApi}?currencyCode='$Cur'&`$filter=" + [uri]::EscapeDataString("$Filter and priceType eq 'Consumption'")
     $items = [Collections.Generic.List[object]]::new()
     try {
         for ($page = 0; $url -and $page -lt 5; $page++) {
@@ -121,8 +122,26 @@ function Get-RetailItems([string] $Filter) {
         }
         return
     }
-    $PriceCache[$Filter] = $items
+    $PriceCache[$cacheKey] = $items
     return $items
+}
+
+# Exchange rate From -> $Currency, used ONLY to rank findings whose amounts are in different
+# currencies. The price list converts every price from USD at one rate per currency, so the ratio of
+# the same meter's price in both currencies is that rate. A P80 disk (about USD 3,400/month) keeps
+# rounding error small. $null when unavailable (offline, API down).
+$FxRates = @{}
+function Get-FxRate([string] $From) {
+    if (-not $From -or $From -eq $Currency) { return 1.0 }
+    if ($FxRates.ContainsKey($From)) { return $FxRates[$From] }
+    $filter = "serviceName eq 'Storage' and armRegionName eq 'eastus' and productName eq 'Premium SSD Managed Disks' and skuName eq 'P80 LRS'"
+    $price = @{}
+    foreach ($c in $From, $Currency) {
+        $it = @(Get-RetailItems $filter $c) | Where-Object { $_.meterName -eq 'P80 LRS Disk' -and $_.unitOfMeasure -eq '1/Month' } | Select-Object -First 1
+        $price[$c] = $it ? [double] $it.retailPrice : 0.0
+    }
+    $FxRates[$From] = ($price[$From] -gt 0 -and $price[$Currency] -gt 0) ? $price[$Currency] / $price[$From] : $null
+    return $FxRates[$From]
 }
 
 function Invoke-AzRead {
@@ -589,12 +608,28 @@ foreach ($r in @($detected) + @($advisor)) {
     $findings.Add($f)
 }
 
-# Rank: within each type by cost, then confidence; types by total cost
+# Ranking value: monthly cost converted to $Currency, so a USD amount and a CAD amount compare
+# fairly. Display amounts stay in their original currency.
+# Conversion is only needed when non-zero amounts are in more than one currency. Otherwise raw ranking is exact.
+$fxUsed = @{}; $fxMissing = [Collections.Generic.HashSet[string]]::new()
+$nonZeroCurrencies = @($findings | Where-Object { [double] ($_.monthlyCost ?? 0) -ne 0 -and $_.currency } | ForEach-Object { $_.currency } | Sort-Object -Unique)
+foreach ($f in $findings) {
+    $c = [double] ($f.monthlyCost ?? 0)
+    if ($nonZeroCurrencies.Count -le 1 -or $c -eq 0 -or -not $f.currency -or $f.currency -eq $Currency) { $f.rankValue = $c; continue }
+    $rate = Get-FxRate $f.currency
+    if ($null -eq $rate) { [void] $fxMissing.Add($f.currency); $f.rankValue = $c }
+    else { $fxUsed[$f.currency] = $rate; $f.rankValue = $c * $rate }
+}
+if ($fxMissing.Count) {
+    $warnings.Add("No exchange rate available for $(@($fxMissing) -join ', ') to $Currency, so findings in different currencies were ranked by their raw amounts. The order between them is approximate.")
+}
+
+# Rank: within each type by converted cost, then confidence; types by converted total
 $groups = foreach ($t in $TypeInfo.Keys) {
     $items = @($findings | Where-Object { $_.wasteType -eq $t } |
-        Sort-Object @{ e = { [double] ($_.monthlyCost ?? 0) }; Descending = $true }, @{ e = { $ConfRank[$_.confidence] } })
+        Sort-Object @{ e = { [double] $_.rankValue }; Descending = $true }, @{ e = { $ConfRank[$_.confidence] } })
     [pscustomobject] @{ Type = $t; Label = $TypeInfo[$t]; Items = $items
-        Total = [double] (($items | ForEach-Object { [double] ($_.monthlyCost ?? 0) } | Measure-Object -Sum).Sum) }
+        Total = [double] (($items | ForEach-Object { [double] $_.rankValue } | Measure-Object -Sum).Sum) }
 }
 $groups = @($groups | Sort-Object @{ e = { $_.Items.Count -gt 0 }; Descending = $true }, @{ e = 'Total'; Descending = $true })
 
@@ -652,6 +687,11 @@ foreach ($t in $TypeInfo.Keys) {
 L ''
 $priceMode = $OfflinePricing ? "offline: ``scripts/pricing.json`` (US East, USD)" : "pay-as-you-go list prices for each resource's own region, in $Currency, from the Azure Retail Prices API, with ``scripts/pricing.json`` (US East, USD) as the fallback"
 L "**Cost sources:** *billed* is the actual 30-day cost from the Consumption API, scaled to 30 days. *advisor* is Azure Advisor's monthly savings estimate. *estimated* is $priceMode. Snapshot estimates are upper bounds. Advisor recommendations that match a finding above are merged into it and not counted twice."
+if ($fxUsed.Count) {
+    $rates = (@($fxUsed.GetEnumerator() | Sort-Object Key | ForEach-Object { '1 {0} = {1:N4} {2}' -f $_.Key, $_.Value, $Currency })) -join ', '
+    L ''
+    L "**Ranking across currencies:** amounts are shown in their original currency, but findings are ranked after converting them to $Currency at the rate implied by Microsoft's price list ($rates)."
+}
 L ''
 
 foreach ($g in @($groups | Where-Object { $_.Items.Count })) {
