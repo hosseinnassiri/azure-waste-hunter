@@ -1,0 +1,30 @@
+[
+  {
+    "wasteType": "idle-openai-deployment",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/oai-research",
+    "name": "oai-research",
+    "type": "microsoft.cognitiveservices/accounts",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-ml",
+    "location": "eastus",
+    "owner": "ml@example.com",
+    "app": "research",
+    "env": "dev",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "pending (deployments + metrics)",
+    "sku": "S0",
+    "tier": "",
+    "sizeGb": null,
+    "os": "",
+    "extra": "OpenAI",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "kind": "OpenAI"
+    }
+  }
+]

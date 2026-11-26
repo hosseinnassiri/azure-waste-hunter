@@ -97,9 +97,102 @@ Save '07-advisor-cost.json' @(
     (Adv $P '' "/subscriptions/$P" 'demo-prod' 'subscriptions' 'Medium' 'Consider virtual machine reserved instance to save over your on-demand costs' 'Buy a 1-year Dsv5 reservation (East US)' 96.5),
     (Adv $D 'rg-ml' (Rid $D 'rg-ml' $vm 'vm-gpu-train') 'vm-gpu-train' 'microsoft.compute/virtualmachines' 'High' 'Right-size or shutdown underutilized virtual machines' 'Shut down vm-gpu-train' 1520.0 1))
 
+# ---- Metric-confirmed types (queries 08-12): each has cases that must be flagged AND cases that must be dropped
+$metrics = [ordered]@{}
+# A metrics response: one value per metric; each series is @{ split = '<dim value>' or $null; total = n } or @{ average = n }
+function Set-Metric([string] $id, [string] $metric, [string] $agg, [object[]] $series) {
+    $ts = foreach ($s in $series) {
+        $mv = $s.split ? @(@{ name = @{ value = 'ModelDeploymentName' }; value = $s.split }) : @()
+        @{ metadatavalues = $mv; data = @(@{ timeStamp = $now.AddDays(-1).ToString('yyyy-MM-ddT00:00:00Z'); $agg = $s.value }) }
+    }
+    $script:metrics["$($id.ToLower())|$($metric.ToLower())"] = @{ value = @(@{ name = @{ value = $metric }; timeseries = @($ts) }) }
+}
+function Set-Metrics([string] $id, [hashtable] $totals) {   # several Total metrics in one call, keyed by the first name
+    $vals = foreach ($k in $totals.Keys) { @{ name = @{ value = $k }; timeseries = @(@{ metadatavalues = @(); data = @(@{ timeStamp = $now.AddDays(-1).ToString('yyyy-MM-ddT00:00:00Z'); total = $totals[$k] }) }) } }
+    return @{ value = @($vals) }
+}
+
+$ca = 'Microsoft.App/containerApps'
+function CA($sub, $rg, $name, $loc, [int] $min, [double] $cpu, [string] $mem, [bool] $ingress, [string] $transport, [hashtable] $x = @{}) {
+    $r = Row 'idle-container-app' $sub $rg $ca $name $loc (@{ sku = 'Consumption'; tier = "minReplicas $min"; sizeGb = $min; extra = $transport; confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.checkInputs = [ordered]@{ minReplicas = $min; cpu = $cpu; memory = @($mem); transport = $transport; hasIngress = $ingress; workloadProfile = 'Consumption' }
+    $r
+}
+$caIdle = CA $P 'rg-orders' 'ca-orders-legacy' 'northeurope' 2 1.0 '2Gi' $true 'Auto' @{ owner = 'orders@example.com'; app = 'orders'; env = 'prod' }
+$caBusy = CA $D 'rg-api' 'ca-api-busy' 'eastus' 1 0.5 '1Gi' $true 'Auto'
+$caWork = CA $D 'rg-jobs' 'ca-queue-worker' 'westeurope' 1 0.25 '512Mi' $false '' @{ env = 'dev' }
+Save '08-idle-container-apps.json' @($caIdle, $caBusy, $caWork)
+$metrics["$($caIdle.id.ToLower())|requests"] = Set-Metrics $caIdle.id ([ordered]@{ Requests = 0; RxBytes = 3MB; TxBytes = 2MB })
+$metrics["$($caBusy.id.ToLower())|requests"] = Set-Metrics $caBusy.id ([ordered]@{ Requests = 120000; RxBytes = 900MB; TxBytes = 4GB })
+$metrics["$($caWork.id.ToLower())|requests"] = Set-Metrics $caWork.id ([ordered]@{ Requests = 0; RxBytes = 1MB; TxBytes = 1MB })
+
+$law = 'Microsoft.OperationalInsights/workspaces'
+function LAW($sub, $rg, $name, [int] $ret, [hashtable] $x = @{}) {
+    $r = Row 'log-analytics-workspace' $sub $rg $law $name 'eastus' (@{ sku = 'PerGB2018'; tier = "retention ${ret}d"; sizeGb = $ret; createdTime = (Ago 400); ageDays = 400; confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.checkInputs = [ordered]@{ retention = $ret; freeRetention = 31; sentinel = $false; capacityReservation = $null }
+    $r
+}
+$lawOld = LAW $P 'rg-security' 'log-security-archive' 365 @{ owner = 'secops@example.com'; env = 'prod' }
+$lawOk  = LAW $P 'rg-monitoring' 'log-app-prod' 30
+Save '09-log-analytics-workspaces.json' @($lawOld, $lawOk)
+$metrics["$($lawOld.id.ToLower())|ingestion volume"] = @{ value = @(
+    @{ name = @{ value = 'Ingestion Volume' }; timeseries = @(@{ metadatavalues = @(); data = @(@{ count = 2400000 }) }) },
+    @{ name = @{ value = 'Query Count' }; timeseries = @(@{ metadatavalues = @(); data = @(@{ count = $null }) }) }) }
+$metrics["$($lawOk.id.ToLower())|ingestion volume"] = @{ value = @(
+    @{ name = @{ value = 'Ingestion Volume' }; timeseries = @(@{ metadatavalues = @(); data = @(@{ count = 5000000 }) }) },
+    @{ name = @{ value = 'Query Count' }; timeseries = @(@{ metadatavalues = @(); data = @(@{ count = 3100 }) }) }) }
+
+$st = 'Microsoft.Storage/storageAccounts'
+function STA($sub, $rg, $name, $loc, $sku, $tier, [object[]] $mounts, [hashtable] $x = @{}) {
+    $r = Row 'idle-storage-account' $sub $rg $st $name $loc (@{ sku = $sku; tier = $tier; extra = 'StorageV2'; createdTime = (Ago 500); ageDays = 500; confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.checkInputs = [ordered]@{ accessTier = $tier; kind = 'StorageV2'; isHns = $false; fileMountApps = $mounts }
+    $r
+}
+$stIdle  = STA $D 'rg-legacy' 'stlegacyexports' 'eastus' 'Standard_GRS' 'Hot' @() @{ owner = 'platform@example.com'; env = 'dev' }
+$stHot   = STA $P 'rg-media' 'stmediaarchive' 'westeurope' 'Standard_LRS' 'Hot' @() @{ app = 'media'; env = 'prod' }
+$stNeo   = STA $P 'rg-graph' 'stgraphdata' 'canadacentral' 'Standard_LRS' 'Hot' @(@{ rg = 'rg-graph'; name = 'ca-graphdb' }) @{ app = 'graph'; env = 'prod' }
+$stBusy  = STA $P 'rg-web' 'stwebassets' 'eastus' 'Standard_LRS' 'Hot' @()
+$stIgn   = STA $D 'rg-legacy' 'stkeepforaudit' 'eastus' 'Standard_LRS' 'Cool' @() @{ ignored = 1 }
+Save '10-idle-storage-accounts.json' @($stIdle, $stHot, $stNeo, $stBusy, $stIgn)
+foreach ($pair in @(@($stIdle, 0, 250GB), @($stHot, 52000, 2.1TB), @($stNeo, 0, 20GB), @($stBusy, 880000, 40GB))) {
+    Set-Metric $pair[0].id 'Transactions' 'total' @(@{ value = $pair[1] })
+    Set-Metric $pair[0].id 'UsedCapacity' 'average' @(@{ value = $pair[2] })
+}
+Set-Metric "$($stHot.id)/blobServices/default" 'BlobCapacity' 'average' @(@{ value = 2TB })
+Set-Metric "$($stHot.id)/blobServices/default" 'Transactions' 'total' @()          # 0 GetBlob reads: no series
+Set-Metric "$($stBusy.id)/blobServices/default" 'BlobCapacity' 'average' @(@{ value = 30GB })
+
+$acr = 'Microsoft.ContainerRegistry/registries'
+function ACR($sub, $rg, $name, $loc, $sku, [string[]] $refs, [int] $repl, [hashtable] $x = @{}) {
+    $r = Row 'idle-container-registry' $sub $rg $acr $name $loc (@{ sku = $sku; tier = $sku; extra = "$name.azurecr.io"; createdTime = (Ago 300); ageDays = 300; confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.checkInputs = [ordered]@{ referencedBy = @($refs); replications = $repl; privateEndpoints = 0 }
+    $r
+}
+$crIdle = ACR $D 'rg-build' 'crlegacybuild' 'eastus' 'Premium' @() 1 @{ owner = 'ci@example.com'; env = 'dev' }
+$crBig  = ACR $P 'rg-platform' 'crplatform' 'eastus' 'Premium' @() 0 @{ owner = 'platform@example.com'; env = 'prod' }
+$crRef  = ACR $P 'rg-graph' 'crgraphapps' 'canadacentral' 'Basic' @('ca-graphdb') 0
+Save '11-container-registries.json' @($crIdle, $crBig, $crRef)
+foreach ($pair in @(@($crIdle, 0, 300GB), @($crBig, 9100, 40GB), @($crRef, 0, 3GB))) {
+    Set-Metric $pair[0].id 'TotalPullCount' 'total' @(@{ value = $pair[1] })
+    Set-Metric $pair[0].id 'StorageUsed' 'average' @(@{ value = $pair[2] })
+}
+
+$oai = 'Microsoft.CognitiveServices/accounts'
+$oaiRow = Row 'idle-openai-deployment' $D 'rg-ml' $oai 'oai-research' 'eastus' @{ sku = 'S0'; extra = 'OpenAI'; owner = 'ml@example.com'; app = 'research'; env = 'dev'; confidence = 'pending'; idleSource = 'pending (deployments + metrics)' }
+$oaiRow.checkInputs = [ordered]@{ kind = 'OpenAI' }
+Save '12-openai-accounts.json' @($oaiRow)
+function Dep($name, $sku, [int] $cap, $model, [int] $ageD) { @{ name = $name; sku = @{ name = $sku; capacity = $cap }; properties = @{ model = @{ name = $model; format = 'OpenAI' } }; systemData = @{ createdAt = (Ago $ageD) } } }
+@{ 'rg-ml/oai-research' = @(
+    (Dep 'gpt-ptu-eval' 'GlobalProvisionedManaged' 15 'gpt-4o' 120),
+    (Dep 'gpt-4o-mini-support-ft' 'Standard' 1 'gpt-4o-mini-2024-07-18.ft-3f9a2c' 90),
+    (Dep 'gpt-4o-chat' 'GlobalStandard' 50 'gpt-4o' 200),
+    (Dep 'gpt-ptu-prod' 'ProvisionedManaged' 100 'gpt-4o' 300)) } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Out 'deployments.json') -Encoding utf8
+Set-Metric $oaiRow.id 'AzureOpenAIRequests' 'total' @(@{ split = 'gpt-ptu-prod'; value = 910000 }, @{ split = 'gpt-4o-chat'; value = 45000 })
+
 # CPU metrics: build agent last ran 47 days ago (so the 2nd 30-day window has data); jumpbox has none
 $pts = @(for ($i = 60; $i -ge 47; $i--) { @{ timeStamp = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 35.5 } })
-@{ $vmBuild.ToLower() = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) } } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Out 'metrics.json') -Encoding utf8
+$metrics[$vmBuild.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) }
+$metrics | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $Out 'metrics.json') -Encoding utf8
 
 # Billed usage: 30 days for the build agent and the SQL disk, in demo-prod / demo-dev
 $usage = foreach ($i in 1..30) {

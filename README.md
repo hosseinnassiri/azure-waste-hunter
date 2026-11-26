@@ -18,6 +18,16 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 5 | VMs stopped but not deallocated | `PowerState/stopped` (compute still billed); idle time from 90 days of CPU metrics |
 | 6 | Snapshots older than 90 days | `timeCreated`, plus whether the source disk still exists |
 | 7 | Azure Advisor cost recommendations | merged into findings 1–6 when they cover the same resource, so nothing is listed twice |
+| 8 | Idle Container Apps | `minReplicas` of 1 or more, with no requests or traffic in 30 days (scale-to-zero apps cost nothing idle and are skipped) |
+| 9 | Log Analytics workspaces | retention above the free period, or data ingested that nobody queries |
+| 10 | Idle storage accounts / unread Hot blobs | 0 transactions in 30 days; or 100 GiB or more on Hot with 0 reads (Cool is cheaper) |
+| 11 | Idle or oversized container registries | 0 pulls in 30 days; or Premium without Premium features |
+| 12 | Idle Azure OpenAI deployments | PTU or fine-tuned deployments (billed hourly) with 0 requests in 30 days |
+
+Types 8–12 start as candidates from Resource Graph and are only reported when 30 days of Azure
+Monitor metrics confirm them. Anything that may be an app's data store or dependency (a storage
+account behind an Azure Files mount, a registry a Container App pulls from) is rated low confidence
+with a "do not delete" note.
 
 Each finding includes: resource ID and portal link, type, subscription, resource group, location,
 owner/app/env tags, age or idle time, estimated monthly cost and its source, confidence
@@ -88,7 +98,8 @@ report states that rate.
 ## Safety
 
 - Every `az` call in the runner goes through an allow list: `graph query`, `monitor metrics list`,
-  `advisor recommendation list`, `consumption usage list`, `account show/list/set`. Anything else
+  `advisor recommendation list`, `consumption usage list`, `cognitiveservices account deployment list`,
+  `account show/list/set`. Anything else
   throws. `account set` only switches the local CLI context for multi-tenant scans, and the
   original default subscription is restored afterwards.
 - The only non-`az` call is a GET to the public Retail Prices API. It's sent only service, SKU,
@@ -113,7 +124,7 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/settings.json                       deny rules backing those rules
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
-  queries/01..07-*.kql                      one Resource Graph query per waste type
+  queries/01..12-*.kql                      one Resource Graph query per waste type (08-12: metric-confirmed candidates)
   scripts/Invoke-WasteHunt.ps1              runner: scan, idle time, cost, merge, rank, report
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
   scripts/pricing.json                      fallback list prices

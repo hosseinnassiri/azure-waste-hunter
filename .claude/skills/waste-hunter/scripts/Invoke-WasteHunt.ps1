@@ -61,6 +61,7 @@ $AllowedAz = @(
     'monitor metrics list'
     'advisor recommendation list'
     'consumption usage list'
+    'cognitiveservices account deployment list'   # OpenAI deployments aren't in Resource Graph; names/SKUs/capacity only
     'account show'
     'account list'
     'account set'      # local CLI context only, restored at the end
@@ -184,9 +185,18 @@ function Get-FixtureResponse([string] $cmd, [string[]] $AzArgs) {
             return @{ count = $rows.Count; data = $rows; skip_token = $null }
         }
         'monitor metrics list' {
+            # Keyed "<resource id>|<first metric name>" (lower case), falling back to "<resource id>"
             $id = $AzArgs[[array]::IndexOf($AzArgs, '--resource') + 1].ToLower()
+            $metric = $AzArgs[[array]::IndexOf($AzArgs, '--metric') + 1].ToLower()
             $m = & $read 'metrics.json'
-            return ($m -and $m.ContainsKey($id)) ? $m[$id] : @{ value = @() }
+            if ($m) { foreach ($k in "$id|$metric", $id) { if ($m.ContainsKey($k)) { return $m[$k] } } }
+            return @{ value = @() }
+        }
+        'cognitiveservices account deployment list' {
+            # Keyed "<resource group>/<account name>" (lower case)
+            $key = ($AzArgs[[array]::IndexOf($AzArgs, '-g') + 1] + '/' + $AzArgs[[array]::IndexOf($AzArgs, '-n') + 1]).ToLower()
+            $d = & $read 'deployments.json'
+            return ($d -and $d.ContainsKey($key)) ? @($d[$key]) : @()
         }
         'consumption usage list' {
             $sub = $AzArgs[[array]::IndexOf($AzArgs, '--subscription') + 1]
@@ -222,12 +232,194 @@ function Get-LastCpuActivity([string] $ResourceId) {
         $res = Invoke-AzRead @('monitor', 'metrics', 'list', '--resource', $ResourceId, '--metric', 'Percentage CPU',
             '--interval', 'P1D', '--aggregation', 'Maximum',
             '--start-time', $start.ToString('yyyy-MM-ddTHH:mm:ssZ'), '--end-time', $end.ToString('yyyy-MM-ddTHH:mm:ssZ'))
-        $stamps = foreach ($v in @($res.value)) { foreach ($ts in @($v.timeseries)) { foreach ($d in @($ts.data)) {
-            if ($d -and $null -ne $d.maximum -and [double] $d.maximum -gt 0) { [string] $d.timeStamp } } } }
+        $stamps = foreach ($v in @((Get-Key $res 'value'))) { foreach ($ts in @((Get-Key $v 'timeseries'))) { foreach ($d in @((Get-Key $ts 'data'))) {
+            $mx = Get-Key $d 'maximum'
+            if ($null -ne $mx -and [double] $mx -gt 0) { [string] (Get-Key $d 'timeStamp') } } } }
         $last = @($stamps) | Sort-Object | Select-Object -Last 1
         if ($last) { return @{ Window = 90; Last = [DateTimeOffset]::Parse($last, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime } }
     }
     return @{ Window = 90; Last = $null }
+}
+
+# Generic metrics read. Returns @{ <metric name> = @{ Sum; Points; Last; BySplit } }. A window of
+# 30 days or less is never clipped. Null datapoints and absent series (no activity) count as zero.
+# With -Filter "<Dim> eq '*'", BySplit holds per-dimension-value sums.
+function Get-MetricStats([string] $Id, [string[]] $Metrics, [string] $Aggregation = 'Total', [string] $Interval = 'P1D',
+                         [int] $Days = 30, [string] $Filter) {
+    $a = @('monitor', 'metrics', 'list', '--resource', $Id, '--metric') + $Metrics +
+         @('--aggregation', $Aggregation, '--interval', $Interval,
+           '--start-time', $Now.AddDays(-$Days).ToString('yyyy-MM-ddTHH:mm:ssZ'), '--end-time', $Now.ToString('yyyy-MM-ddTHH:mm:ssZ'))
+    if ($Filter) { $a += @('--filter', $Filter) }
+    $res = Invoke-AzRead $a
+    $agg = $Aggregation.ToLower()
+    $out = @{}
+    # Index access throughout: strict mode throws on a missing key read with dot syntax, and metric
+    # responses omit keys freely.
+    foreach ($v in @((Get-Key $res 'value'))) {
+        if (-not $v) { continue }
+        $s = @{ Sum = 0.0; Points = 0; Last = $null; BySplit = @{} }
+        foreach ($ts in @((Get-Key $v 'timeseries'))) {
+            if (-not $ts) { continue }
+            $mv = @((Get-Key $ts 'metadatavalues') | Where-Object { $_ })
+            $key = $mv ? [string] (Get-Key $mv[0] 'value') : ''
+            foreach ($d in @((Get-Key $ts 'data'))) {
+                $x = Get-Key $d $agg
+                if ($null -eq $x) { continue }
+                $x = [double] $x
+                $s.Sum += $x; $s.Points++; $s.Last = $x
+                $s.BySplit[$key] = ($s.BySplit[$key] ?? 0.0) + $x
+            }
+        }
+        $out[[string] (Get-Key (Get-Key $v 'name') 'value')] = $s
+    }
+    return $out
+}
+
+# Safe nested read: $null for a missing key or a non-dictionary, never a strict-mode error.
+function Get-Key($o, [string] $k) { if ($o -is [System.Collections.IDictionary] -and $o.Contains($k)) { return $o[$k] }; return $null }
+function Get-StatSum($stats, [string] $Name) { $x = $stats[$Name]; return $x ? [double] $x.Sum : 0.0 }
+function Get-StatLast($stats, [string] $Name) { $x = $stats[$Name]; return ($x -and $null -ne $x.Last) ? [double] $x.Last : 0.0 }
+function ConvertTo-GiB([string] $mem) {
+    if ($mem -match '^\s*([\d.]+)\s*(Gi|G)?\s*$') { return [double] $Matches[1] }
+    if ($mem -match '^\s*([\d.]+)\s*(Mi|M)\s*$') { return [double] $Matches[1] / 1024 }
+    return 0.0
+}
+function Format-Bytes([double] $b) {
+    if ($b -ge 1GB) { return '{0:N1} GiB' -f ($b / 1GB) }; if ($b -ge 1MB) { return '{0:N1} MiB' -f ($b / 1MB) }
+    if ($b -ge 1KB) { return '{0:N0} KiB' -f ($b / 1KB) }; return '{0:N0} B' -f $b
+}
+
+# Metric-confirmed waste types (queries 08-12). Their query rows are candidates: Confirm-Candidate
+# turns each into 0..n findings, or drops it when the metrics show it's in use.
+$CandidateTypes = @('idle-container-app', 'log-analytics-workspace', 'idle-storage-account', 'idle-container-registry', 'idle-openai-deployment')
+$MinAgeDays = 30   # need 30 days of history before calling anything idle
+
+function New-FindingFrom($row, [hashtable] $Set) {
+    $f = [ordered]@{}; foreach ($k in $row.Keys) { if ($k -ne 'checkInputs') { $f[$k] = $row[$k] } }
+    foreach ($k in $Set.Keys) { $f[$k] = $Set[$k] }
+    return $f
+}
+
+function Confirm-Candidate($r) {
+    $ci = (Get-Key $r 'checkInputs') ?? @{}
+    $young = ($null -ne $r.ageDays -and [int] $r.ageDays -lt $MinAgeDays)
+    switch ($r.wasteType) {
+        'idle-container-app' {
+            $m = Get-MetricStats $r.id @('Requests', 'RxBytes', 'TxBytes') 'Total'
+            $req = Get-StatSum $m 'Requests'; $net = (Get-StatSum $m 'RxBytes') + (Get-StatSum $m 'TxBytes')
+            if ($req -gt 0 -or $net -gt 100MB) { return @() }
+            $http = [bool] $ci.hasIngress -and $ci.transport -ne 'Tcp'
+            $dedicated = $ci.workloadProfile -and $ci.workloadProfile -ne 'Consumption'
+            $conf = ($http -and -not $dedicated) ? 'high' : 'medium'
+            $why = "minReplicas $($ci.minReplicas) keeps replicas running, but there were $([int] $req) requests and $(Format-Bytes $net) of network traffic in 30 days"
+            if (-not $http) { $why += '; no HTTP ingress, so this is judged by network traffic only (a quiet background worker looks the same)' }
+            if ($dedicated) { $why += "; runs on dedicated workload profile '$($ci.workloadProfile)', billed per node, not per app" }
+            return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = 30; idleSource = 'Requests/RxBytes/TxBytes metrics, 30 days'
+                                           cpu = [double] $ci.cpu; memGiB = (@($ci.memory) | ForEach-Object { ConvertTo-GiB $_ } | Measure-Object -Sum).Sum
+                                           minReplicas = [int] $ci.minReplicas; dedicated = $dedicated })
+        }
+        'log-analytics-workspace' {
+            $m = Get-MetricStats $r.id @('Ingestion Volume', 'Query Count') 'Count'
+            $records = Get-StatSum $m 'Ingestion Volume'; $queries = Get-StatSum $m 'Query Count'
+            $problems = @(); $conf = 'low'
+            if ([int] $ci.retention -gt [int] $ci.freeRetention) {
+                $sentinelNote = [bool] $ci.sentinel ? ' with Sentinel' : ''
+                $problems += "retention is $($ci.retention) days, above the free $($ci.freeRetention) days$sentinelNote"
+            }
+            if ($records -gt 0 -and $queries -eq 0 -and -not $young) {
+                $problems += "$('{0:N0}' -f $records) records ingested in 30 days but 0 queries, including alert queries"
+                $conf = 'medium'
+            }
+            if (-not $problems) { return @() }
+            $why = ($problems -join '; ') + '. Cost depends on GB ingested and retained, which platform metrics do not expose (see the workspace''s Usage and estimated costs page).'
+            if ($problems.Count -eq 1 -and $problems[0] -like 'retention*') { $why += ' Longer retention may be a compliance requirement.' }
+            return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = $null; idleSource = 'Ingestion Volume/Query Count metrics, 30 days'
+                                           records = $records; queries = $queries })
+        }
+        'idle-storage-account' {
+            if ($young) { return @() }
+            $tx = Get-StatSum (Get-MetricStats $r.id @('Transactions') 'Total') 'Transactions'
+            $usedBytes = Get-StatLast (Get-MetricStats $r.id @('UsedCapacity') 'Average' 'PT1H' 2) 'UsedCapacity'
+            $mounts = @($ci.fileMountApps | Where-Object { $_ })
+            $sameRg = @($mounts | Where-Object { $_.rg -eq ([string] $r.resourceGroup).ToLower() } | ForEach-Object { $_.name })
+            $tierName = [string] $ci.accessTier
+            if ($tx -eq 0) {
+                $conf = ($tierName -in 'Cool', 'Cold', 'Archive') ? 'medium' : 'high'
+                $why = "0 transactions on any service (blob, file, queue, table) in 30 days; $(Format-Bytes $usedBytes) stored"
+                if ($conf -eq 'medium') { $why += "; $tierName tier, so this may be intentional cold storage" }
+                if ($sameRg) { $conf = 'low'; $why += "; Container App(s) in the same resource group mount an Azure Files volume ($($sameRg -join ', ')). This account may be their data store, idle only because the app is scaled to zero." }
+                elseif ($mounts) { $conf = ($conf -eq 'high') ? 'medium' : 'low'; $why += "; Container Apps in this subscription mount Azure Files volumes ($(@($mounts | ForEach-Object { $_.name }) -join ', ')). Check that none use this account." }
+                return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = 30; idleSource = 'Transactions metric, 30 days'
+                                               sizeGb = [math]::Round($usedBytes / 1GB, 2); usedGiB = $usedBytes / 1GB; mounted = [bool] $sameRg })
+            }
+            if ($tierName -eq 'Hot' -and $ci.kind -ne 'FileStorage') {
+                $blobId = "$($r.id)/blobServices/default"
+                $blobGiB = (Get-StatLast (Get-MetricStats $blobId @('BlobCapacity') 'Average' 'PT1H' 2) 'BlobCapacity') / 1GB
+                if ($blobGiB -lt 100) { return @() }
+                $reads = Get-StatSum (Get-MetricStats $blobId @('Transactions') 'Total' -Filter "ApiName eq 'GetBlob'") 'Transactions'
+                if ($reads -gt 0) { return @() }
+                $why = "$('{0:N0}' -f $blobGiB) GiB of blob data on the Hot tier with 0 GetBlob reads in 30 days. Cool stores it for less (reads cost more, and there's a 30-day minimum)"
+                return @(New-FindingFrom $r @{ wasteType = 'hot-blob-unread'; confidence = 'medium'; reason = $why; idleDays = 30; idleSource = 'GetBlob transactions, 30 days'
+                                               sizeGb = [math]::Round($blobGiB, 1); usedGiB = $blobGiB })
+            }
+            return @()
+        }
+        'idle-container-registry' {
+            if ($young) { return @() }
+            $pulls = Get-StatSum (Get-MetricStats $r.id @('TotalPullCount') 'Total') 'TotalPullCount'
+            $storeGiB = (Get-StatLast (Get-MetricStats $r.id @('StorageUsed') 'Average' 'PT1H' 2) 'StorageUsed') / 1GB
+            $refs = @($ci.referencedBy | Where-Object { $_ })
+            $repl = [int] ($ci.replications ?? 0)
+            if ($pulls -eq 0) {
+                $conf = $refs ? 'low' : 'high'
+                $why = "0 image pulls by any client in 30 days; $('{0:N1}' -f $storeGiB) GiB stored"
+                if ($repl) { $why += "; $repl geo-replication(s), each billed" }
+                if ($refs) { $why += "; still referenced by Container App(s) $($refs -join ', '). Scale-to-zero apps only pull when a replica starts, so deleting it would break the next scale-up." }
+                return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = 30; idleSource = 'TotalPullCount metric, 30 days'
+                                               sizeGb = [math]::Round($storeGiB, 1); storeGiB = $storeGiB; replications = $repl })
+            }
+            if ($r.sku -eq 'Premium' -and $repl -eq 0 -and [int] ($ci.privateEndpoints ?? 0) -eq 0 -and $storeGiB -le 100) {
+                $why = "Premium registry with no geo-replications, no private endpoints and $('{0:N1}' -f $storeGiB) GiB stored, which fits Standard's 100 GiB included storage. Check for other Premium-only features (content trust, dedicated data endpoints, connected registries) first"
+                return @(New-FindingFrom $r @{ wasteType = 'oversized-container-registry'; confidence = 'medium'; reason = $why
+                                               idleDays = $null; idleSource = "$([int] $pulls) pulls in 30 days (in use)"; sizeGb = [math]::Round($storeGiB, 1); storeGiB = $storeGiB })
+            }
+            return @()
+        }
+        'idle-openai-deployment' {
+            $deps = @(Invoke-AzRead @('cognitiveservices', 'account', 'deployment', 'list', '-g', $r.resourceGroup, '-n', $r.name, '--subscription', $r.subscriptionId))
+            # Only names, SKU and model are read from each deployment, never anything else
+            $info = foreach ($d in $deps) {
+                if (-not $d) { continue }
+                $skuN = [string] (Get-Key (Get-Key $d 'sku') 'name')
+                $model = [string] (Get-Key (Get-Key (Get-Key $d 'properties') 'model') 'name')
+                [pscustomobject] @{ Name = [string] (Get-Key $d 'name'); Sku = $skuN; Model = $model
+                    Capacity = [int] ((Get-Key (Get-Key $d 'sku') 'capacity') ?? 0)
+                    Created = [string] (Get-Key (Get-Key $d 'systemData') 'createdAt')
+                    Ptu = $skuN -like '*Provisioned*'; FineTuned = $model -match '\.ft-|^ft:' }
+            }
+            $billable = @($info | Where-Object { $_.Ptu -or $_.FineTuned })
+            if (-not $billable) { return @() }
+            $m = Get-MetricStats $r.id @('AzureOpenAIRequests') 'Total' -Filter "ModelDeploymentName eq '*'"
+            $byDep = $m['AzureOpenAIRequests'] ? $m['AzureOpenAIRequests'].BySplit : @{}
+            $out = @()
+            foreach ($d in $billable) {
+                $reqs = [double] ($byDep[$d.Name] ?? 0)
+                if ($reqs -gt 0) { continue }
+                $ageD = $d.Created ? [int] ($Now - [DateTimeOffset]::Parse($d.Created, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime).TotalDays : $null
+                $billing = $d.Ptu ? "$($d.Capacity) PTU of $($d.Sku)" : 'fine-tuned model hosting'
+                $conf = ($null -ne $ageD -and $ageD -lt $MinAgeDays) ? 'medium' : 'high'
+                $why = "Deployment '$($d.Name)' (model $($d.Model)) bills hourly for $billing but had 0 requests in 30 days"
+                if ($d.Ptu) { $why += '. If a PTU reservation covers it, the commitment is already paid, but the capacity is still unused' }
+                if ($conf -eq 'medium') { $why += "; created $ageD day(s) ago" }
+                $out += New-FindingFrom $r @{ id = "$($r.id)/deployments/$($d.Name)"; name = "$($r.name)/$($d.Name)"; type = 'microsoft.cognitiveservices/accounts/deployments'
+                    sku = $d.Sku; tier = $d.Ptu ? 'provisioned' : 'fine-tuned'; sizeGb = $d.Capacity; extra = $d.Model
+                    createdTime = $d.Created; ageDays = $ageD; idleDays = [math]::Min(30, ($ageD ?? 30)); idleSource = 'AzureOpenAIRequests by deployment, 30 days'
+                    confidence = $conf; reason = $why; ptu = $d.Ptu; capacity = $d.Capacity }
+            }
+            return $out
+        }
+    }
+    return @()
 }
 
 # Actual cost per resource over the last 30 days, keyed by lower-case resource ID.
@@ -237,13 +429,16 @@ function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
     $n = 0; $total = 0
     foreach ($u in @($usage)) {
         if ($u) { $total++ }
-        if (-not $u -or -not $u.instanceId -or $null -eq $u.pretaxCost -or [string] $u.pretaxCost -eq 'None') { continue }
-        $key = ([string] $u.instanceId).ToLower()
+        # Index access: some billing schemas omit these keys entirely
+        $iid = Get-Key $u 'instanceId'; $cost = Get-Key $u 'pretaxCost'
+        if (-not $iid -or $null -eq $cost -or [string] $cost -eq 'None') { continue }
+        $key = ([string] $iid).ToLower()
         if (-not $Billed.ContainsKey($key)) { $Billed[$key] = @{ Cost = 0.0; Days = [Collections.Generic.HashSet[string]]::new(); Currency = '' } }
         $e = $Billed[$key]
-        $e.Cost += [double] $u.pretaxCost
-        if ($u.usageStart) { [void] $e.Days.Add(([string] $u.usageStart).Substring(0, 10)) }
-        if ($u.currency) { $e.Currency = [string] $u.currency }
+        $e.Cost += [double] $cost
+        $start = Get-Key $u 'usageStart'; $cur = Get-Key $u 'currency'
+        if ($start) { [void] $e.Days.Add(([string] $start).Substring(0, 10)) }
+        if ($cur) { $e.Currency = [string] $cur }
         $n++
     }
     # Newer billing accounts (MCA, some Visual Studio offers) return usage records that
@@ -304,6 +499,7 @@ $coverage   = [Collections.Generic.List[object]]::new()
 $queryStats = [ordered]@{}
 $billed     = @{}
 $idleInfo   = @{}
+$CandidateStats = @{}
 $activeSub  = $original.id
 $EnabledIds = [Collections.Generic.HashSet[string]]::new([string[]] @($enabled | ForEach-Object { $_.id }), [StringComparer]::OrdinalIgnoreCase)
 
@@ -341,6 +537,23 @@ try {
             }
             $queryErrors = @($errors | Where-Object { $_ -like '*.kql:*' }).Count
             if ($queryErrors -eq $queryFiles.Count) { $status = 'failed' } elseif ($errors) { $status = 'partial' }
+
+            # Confirm metric-based candidates (queries 08-12) in this tenant's context. A candidate
+            # becomes 0..n findings; one the metrics show is in use is dropped. Ignored rows are kept
+            # so they still count as excluded.
+            $cands = @($passRows | Where-Object { $_.wasteType -in $CandidateTypes -and -not [bool] $_.ignored })
+            if ($cands -and -not $SkipMetrics) { Write-Host "  checking $($cands.Count) candidate(s) against 30 days of metrics ..." }
+            $confirmed = [Collections.Generic.List[object]]::new()
+            foreach ($row in $passRows) {
+                if ($row.wasteType -notin $CandidateTypes -or [bool] $row.ignored) { $confirmed.Add($row); continue }
+                if (-not $CandidateStats.ContainsKey($row.wasteType)) { $CandidateStats[$row.wasteType] = @{ checked = 0; flagged = 0; skipped = 0; failed = 0 } }
+                $st = $CandidateStats[$row.wasteType]
+                if ($SkipMetrics) { $st.skipped++; continue }
+                $st.checked++
+                try { foreach ($fnd in @(Confirm-Candidate $row)) { if ($fnd) { $confirmed.Add($fnd); $st.flagged++ } } }
+                catch { $st.failed++; $warnings.Add("Couldn't check $($row.name) ($($row.wasteType)), so it's not in this report: $($_.Exception.Message)") }
+            }
+            $passRows = $confirmed
 
             # Idle time for stopped VMs (needs this tenant's context)
             foreach ($vm in @($passRows | Where-Object { $_.wasteType -eq 'vm-stopped-not-deallocated' -and -not $_.ignored })) {
@@ -386,6 +599,13 @@ $TypeInfo = [ordered]@{
     'empty-app-service-plan'     = 'Empty App Service plans'
     'vm-stopped-not-deallocated' = 'VMs stopped but not deallocated'
     'old-snapshot'               = 'Disk snapshots older than 90 days'
+    'idle-container-app'         = 'Idle Container Apps with always-on replicas'
+    'log-analytics-workspace'    = 'Log Analytics: paid retention or unqueried data'
+    'idle-storage-account'       = 'Idle storage accounts'
+    'hot-blob-unread'            = 'Hot-tier blob data nobody reads'
+    'idle-container-registry'    = 'Idle container registries'
+    'oversized-container-registry' = 'Premium container registries not using Premium'
+    'idle-openai-deployment'     = 'Idle Azure OpenAI deployments that bill hourly'
     'advisor-cost'               = 'Other Azure Advisor cost recommendations'
 }
 $ConfRank = @{ high = 0; medium = 1; low = 2 }
@@ -462,8 +682,85 @@ function Get-LivePrice($f) {
                 Select-Object -First 1
             if ($it) { return @{ Cost = [double] $it.retailPrice * $hours; Note = "$sku $($win ? 'Windows' : 'Linux')$($spot ? ' Spot' : '') list price, $region" } }
         }
+        'idle-container-app' {
+            if ($f.dedicated) { return $null }
+            $cf = "serviceName eq 'Azure Container Apps' and armRegionName eq '$rg'"
+            $pv = Get-MeterPrice $cf { $_.meterName -eq 'Standard vCPU Idle Usage' -and $_.unitOfMeasure -eq '1 Second' }
+            $pm = Get-MeterPrice $cf { $_.meterName -eq 'Standard Memory Idle Usage' -and $_.unitOfMeasure -eq '1 GiB Second' }
+            if ($null -ne $pv -and $null -ne $pm) { return @{ Cost = Get-ContainerAppIdleCost $f $pv $pm; Note = "idle-rate list price x$($f.minReplicas) replica(s), $region; upper bound, free grant not applied" } }
+        }
+        { $_ -in 'idle-storage-account', 'hot-blob-unread' } {
+            if ($sku -like 'Premium*') { return $null }
+            $redName = Get-StorageRedundancyName $sku
+            $items = @(Get-RetailItems "serviceName eq 'Storage' and armRegionName eq '$rg' and productName eq 'General Block Blob v2' and (meterName eq 'Hot $redName Data Stored' or meterName eq 'Cool $redName Data Stored' or meterName eq 'Cold $redName Data Stored')")
+            $price = @{}
+            foreach ($t in 'Hot', 'Cool', 'Cold') {
+                $it = $items | Where-Object { $_.meterName -eq "$t $redName Data Stored" -and $_.unitOfMeasure -eq '1 GB/Month' } | Sort-Object { [double] $_.tierMinimumUnits } | Select-Object -First 1
+                if ($it) { $price[$t] = [double] $it.retailPrice }
+            }
+            if ($f.wasteType -eq 'hot-blob-unread') {
+                if ($price['Hot'] -and $price['Cool']) { return @{ Cost = $f.usedGiB * ($price['Hot'] - $price['Cool']); Note = "Hot minus Cool $redName list price, $region" } }
+            }
+            else {
+                $t = $f.tier ? [string] $f.tier : 'Hot'
+                if ($price[$t]) { return @{ Cost = $f.usedGiB * $price[$t]; Note = "all capacity at blob $t $redName list price, $region; approximate" } }
+            }
+        }
+        { $_ -in 'idle-container-registry', 'oversized-container-registry' } {
+            $items = @(Get-RetailItems "serviceName eq 'Container Registry' and armRegionName eq '$rg'")
+            $unit = @{}
+            foreach ($s in 'Basic', 'Standard', 'Premium') {
+                $it = $items | Where-Object { $_.meterName -eq "$s Registry Unit" -and $_.unitOfMeasure -eq '1/Day' } | Select-Object -First 1
+                if ($it) { $unit[$s] = [double] $it.retailPrice }
+            }
+            $stor = $items | Where-Object { $_.meterName -eq 'Data Stored' -and $_.skuName -eq $sku -and $_.unitOfMeasure -eq '1 GB/Month' } | Select-Object -First 1
+            $repl = $items | Where-Object { $_.meterName -eq 'Premium Registry Replication Unit' -and $_.unitOfMeasure -eq '1/Day' } | Select-Object -First 1
+            if ($f.wasteType -eq 'oversized-container-registry') {
+                if ($unit['Premium'] -and $unit['Standard']) { return @{ Cost = ($unit['Premium'] - $unit['Standard']) * 30; Note = "Premium minus Standard list price, $region" } }
+            }
+            elseif ($unit[$sku]) {
+                $c = Get-RegistryCost $f $unit[$sku] ($stor ? [double] $stor.retailPrice : 0.1) ($repl ? [double] $repl.retailPrice : 0)
+                return @{ Cost = $c; Note = "$sku registry list price incl. storage over the included amount, $region" }
+            }
+        }
+        'idle-openai-deployment' {
+            if (-not $f.ptu) { return $null }   # fine-tuned hosting is priced per model: pricing.json
+            $meter = @{ ProvisionedManaged = 'Provisioned Managed Regional Unit'; GlobalProvisionedManaged = 'Provisioned Managed Global Unit'; DataZoneProvisionedManaged = 'Provisioned Managed Data Zone Unit' }[$sku]
+            if (-not $meter) { return $null }
+            $it = @(Get-RetailItems "serviceName eq 'Foundry Models' and armRegionName eq '$rg' and productName eq 'Azure OpenAI' and meterName eq '$meter'") |
+                Where-Object { $_.unitOfMeasure -eq '1/Hour' } | Select-Object -First 1
+            if ($it) { return @{ Cost = [double] $it.retailPrice * $hours * $f.capacity; Note = "$($f.capacity) PTU x $meter list price, $region" } }
+        }
     }
     return $null
+}
+
+# One meter's price in $Currency, or $null when not found. The API rounds very small per-second
+# prices to 0 in every currency except USD (Container Apps idle: USD 0.000003, CAD 0), so a zero
+# price that's non-zero in USD is replaced by USD x the price-list exchange rate.
+function Get-MeterPrice([string] $Filter, [scriptblock] $Match) {
+    $it = @(Get-RetailItems $Filter) | Where-Object $Match | Select-Object -First 1
+    if (-not $it) { return $null }
+    $p = [double] $it.retailPrice
+    if ($p -eq 0 -and $Currency -ne 'USD') {
+        $usd = @(Get-RetailItems $Filter 'USD') | Where-Object $Match | Select-Object -First 1
+        $rate = Get-FxRate 'USD'
+        if ($usd -and [double] $usd.retailPrice -gt 0 -and $null -ne $rate) { $p = [double] $usd.retailPrice * $rate }
+    }
+    return $p
+}
+
+# Shared cost formulas, used with live prices and with pricing.json fallbacks
+function Get-ContainerAppIdleCost($f, [double] $perVcpuSecond, [double] $perGiBSecond) {
+    return [double] $f.minReplicas * ([double] $f.cpu * $perVcpuSecond + [double] $f.memGiB * $perGiBSecond) * 30 * 86400
+}
+function Get-RegistryCost($f, [double] $unitPerDay, [double] $perGbMonth, [double] $replUnitPerDay) {
+    $included = @{ Basic = 10; Standard = 100; Premium = 500 }[[string] $f.sku] ?? 0
+    return $unitPerDay * 30 + [math]::Max(0, [double] $f.storeGiB - $included) * $perGbMonth + [int] $f.replications * $replUnitPerDay * 30
+}
+function Get-StorageRedundancyName([string] $sku) {
+    $r = ($sku -split '_')[-1].ToUpper()
+    return @{ RAGRS = 'RA-GRS'; RAGZRS = 'RA-GZRS' }[$r] ?? $r
 }
 
 function Get-Estimate($f) {
@@ -505,6 +802,39 @@ function Get-Estimate($f) {
             return @{ Cost = $cost; Note = "list price ~$vcpu vCPU $fam-family$(($f.tier -eq 'Spot') ? ', Spot' : '')" }
         }
         'orphaned-nic' { return @{ Cost = 0.0; Note = 'NICs are free' } }
+        'idle-container-app' {
+            if ($f.dedicated) { return @{ Cost = $null; Note = 'dedicated workload profile, billed per node' } }
+            $p = $Pricing.containerApps
+            return @{ Cost = Get-ContainerAppIdleCost $f $p.idlePerVcpuSecond $p.idlePerGiBSecond; Note = "idle-rate list price x$($f.minReplicas) replica(s); upper bound, free grant not applied" }
+        }
+        'log-analytics-workspace' { return @{ Cost = $null; Note = 'GB ingested and retained not exposed by metrics' } }
+        { $_ -in 'idle-storage-account', 'hot-blob-unread' } {
+            if ($sku -like 'Premium*') { return @{ Cost = $null; Note = 'premium storage is priced by provisioned size' } }
+            $p = $Pricing.storagePerGb
+            $mult = $p.redundancyMultiplier[(Get-StorageRedundancyName $sku)] ?? 1
+            if ($f.wasteType -eq 'hot-blob-unread') { return @{ Cost = $f.usedGiB * ($p.Hot - $p.Cool) * $mult; Note = 'Hot minus Cool list price' } }
+            $t = $f.tier ? [string] $f.tier : 'Hot'
+            return @{ Cost = $f.usedGiB * ($p[$t] ?? $p.Hot) * $mult; Note = "all capacity at blob $t list price; approximate" }
+        }
+        'idle-container-registry' {
+            $p = $Pricing.containerRegistries
+            $unit = $p.unitPerDay[$sku]
+            if ($null -eq $unit) { return @{ Cost = $null; Note = "no list price for $sku" } }
+            return @{ Cost = Get-RegistryCost $f $unit $p.storagePerGbMonth $p.replicationUnitPerDay; Note = "$sku registry list price incl. storage over the included amount" }
+        }
+        'oversized-container-registry' {
+            $p = $Pricing.containerRegistries
+            return @{ Cost = ($p.unitPerDay['Premium'] - $p.unitPerDay['Standard']) * 30; Note = 'Premium minus Standard list price' }
+        }
+        'idle-openai-deployment' {
+            $p = $Pricing.openAI
+            if ($f.ptu) {
+                $rate = $p.ptuPerHour[$sku]
+                if ($null -eq $rate) { return @{ Cost = $null; Note = "no list price for $sku" } }
+                return @{ Cost = $rate * $Pricing.hoursPerMonth * $f.capacity; Note = "$($f.capacity) PTU x $sku list price" }
+            }
+            return @{ Cost = $p.fineTunedHostingPerHour * $Pricing.hoursPerMonth; Note = 'typical fine-tuned hosting rate; varies by model' }
+        }
     }
     return @{ Cost = $null; Note = '' }
 }
@@ -534,6 +864,33 @@ function Get-Action($f) {
             $pre = ($f.confidence -eq 'low') ? 'The source disk is gone or this is Azure Backup data. Confirm the data is not needed. ' : ''
             return @("${pre}Check whether a retention policy requires it. If not, delete it. If it must be kept, make sure it's incremental on Standard storage.",
                      "az snapshot delete --ids $id") }
+        'idle-container-app' { return @(
+            "Set minReplicas to 0 so it scales to zero when idle (the first request after idle then has a cold start), or delete the app if it's no longer needed.",
+            "az containerapp update --ids $id --min-replicas 0") }
+        'log-analytics-workspace' { return @(
+            "Check the workspace's Usage and estimated costs page for the real GB and cost. Lower retention to the free period unless a compliance rule needs more (or move old data to the cheaper long-term/archive tier). If nobody queries the data, stop sending it (diagnostic settings, data collection rules) or delete the workspace.",
+            "az monitor log-analytics workspace update --ids $id --retention-time 31") }
+        'idle-storage-account' {
+            if ($f.mounted) { return @(
+                "Do NOT delete before confirming what uses it. A Container App in the same resource group mounts an Azure Files volume and this may be its data. If it is, it's not waste. Tag it waste-hunter:ignore=true to stop it being reported.",
+                '') }
+            return @("Confirm with $who that nothing reads or writes it (apps, Functions, backups, scripts) and that its data isn't needed. Then delete it, or move the data to Cool or Archive if it must be kept.",
+                     "az storage account delete --ids $id") }
+        'hot-blob-unread' { return @(
+            "Move it to the Cool tier: change the account's default tier, or add a lifecycle rule that tiers blobs not accessed for 30 days. Cool has a 30-day minimum and higher read cost, so skip this if reads are about to start.",
+            "az storage account update --ids $id --access-tier Cool") }
+        'idle-container-registry' {
+            if ($f.confidence -eq 'low') { return @(
+                'Keep it while the referencing Container App(s) exist. They pull from it when a replica starts. If those apps are retired, delete the registry along with them.',
+                '') }
+            return @("Confirm with $who that no pipeline or cluster pulls from it, export any images you need, then delete it.",
+                     "az acr delete --ids $id") }
+        'oversized-container-registry' { return @(
+            'Downgrade to Standard if you rely on none of geo-replication, private endpoints, content trust, dedicated data endpoints or connected registries.',
+            "az acr update --ids $id --sku Standard") }
+        'idle-openai-deployment' { return @(
+            "Delete the deployment (re-create it when needed). For PTU, also check whether a reservation covers it before you rely on the saving.",
+            "az cognitiveservices account deployment delete -g $($f.resourceGroup) -n $(($f.name -split '/')[0]) --deployment-name $(($f.name -split '/')[-1]) --subscription $($f.subscriptionId)") }
         'advisor-cost' { return @("Advisor suggests: $($f.extra). Review it on the Advisor Cost tab.", '') }
     }
 }
@@ -642,6 +999,14 @@ function Format-Money([hashtable] $byCur) {
     if (-not $parts) { return "0.00 $Currency" }
     (@($parts | ForEach-Object { '{0:N2} {1}' -f $_.Value, $_.Key })) -join ' + '
 }
+# A group's cost for display: unknown costs say so instead of reading as 0.00
+function Format-GroupCost($items) {
+    $items = @($items)
+    $unknown = @($items | Where-Object { $null -eq $_.monthlyCost }).Count
+    if ($items.Count -and $unknown -eq $items.Count) { return 'cost unknown' }
+    $s = Format-Money (Get-Totals $items)
+    return $unknown ? "$s + $unknown unknown" : $s
+}
 function Get-Totals($items) {
     $t = @{}; foreach ($i in @($items)) { if ($null -ne $i.monthlyCost) { $t[$i.currency] = ($t[$i.currency] ?? 0) + [double] $i.monthlyCost } }; $t
 }
@@ -672,6 +1037,11 @@ L '# Azure waste report'
 L ''
 L "## Estimated monthly savings: **$(Format-Money $totals)**"
 L ''
+# The headline adds every finding, including low-confidence ones whose advice may be "keep it", so
+# show the high-confidence part separately.
+$highTotals = Get-Totals @($findings | Where-Object { $_.confidence -eq 'high' })
+L "High confidence: **$(Format-Money $highTotals)**. The rest needs a check before acting (see each finding's confidence and reason)."
+L ''
 L "$($findings.Count) finding(s) across $(@($groups | Where-Object { $_.Items.Count }).Count) waste type(s). $([int] $exclTotal) resource(s) excluded by ``waste-hunter:ignore=true``."
 L ''
 L "Generated $($Now.ToString('yyyy-MM-dd HH:mm')) UTC. Scope: $ScopeLabel. **Read-only scan: nothing in Azure was changed.**"
@@ -682,7 +1052,8 @@ L '|---|---:|---:|---:|---:|---:|---:|'
 foreach ($t in $TypeInfo.Keys) {
     $g = $groups | Where-Object { $_.Type -eq $t }
     $c = @{}; foreach ($lvl in 'high', 'medium', 'low') { $c[$lvl] = @($g.Items | Where-Object { $_.confidence -eq $lvl }).Count }
-    L "| $($TypeInfo[$t]) | $($g.Items.Count) | $(Format-Money (Get-Totals $g.Items)) | $($c.high) | $($c.medium) | $($c.low) | $($excluded[$t] ?? 0) |"
+    $gc = $g.Items.Count ? (Format-GroupCost $g.Items) : '-'
+    L "| $($TypeInfo[$t]) | $($g.Items.Count) | $gc | $($c.high) | $($c.medium) | $($c.low) | $($excluded[$t] ?? 0) |"
 }
 L ''
 $priceMode = $OfflinePricing ? "offline: ``scripts/pricing.json`` (US East, USD)" : "pay-as-you-go list prices for each resource's own region, in $Currency, from the Azure Retail Prices API, with ``scripts/pricing.json`` (US East, USD) as the fallback"
@@ -695,7 +1066,9 @@ if ($fxUsed.Count) {
 L ''
 
 foreach ($g in @($groups | Where-Object { $_.Items.Count })) {
-    L "## $($g.Label): $($g.Items.Count) finding(s), $(Format-Money (Get-Totals $g.Items))/month"
+    $gcost = Format-GroupCost $g.Items
+    $gsuffix = ($gcost -eq 'cost unknown') ? '' : '/month'
+    L "## $($g.Label): $($g.Items.Count) finding(s), $gcost$gsuffix"
     L ''
     L '| # | Resource | Subscription / RG | Location | Owner / App / Env | Age / idle | Est. monthly | Confidence | Why | Suggested action (not executed) |'
     L '|---:|---|---|---|---|---|---:|---|---|---|'
@@ -725,6 +1098,15 @@ L '|---|---|---|---|'
 foreach ($c in $coverage) { L "| ``$($c.Tenant)`` | $($c.Scope) | $(Esc $c.Subscriptions) | $($c.Status) |" }
 L ''
 L ('Rows returned per query (including ignored): ' + ((@($queryStats.GetEnumerator() | ForEach-Object { "``$($_.Key)`` $($_.Value)" })) -join ', ') + '.')
+if ($CandidateStats.Count) {
+    $parts = foreach ($k in $CandidateTypes) { $s = $CandidateStats[$k]; if ($s) {
+        $unit = ($k -eq 'idle-openai-deployment') ? 'account(s)' : 'resource(s)'
+        "$($TypeInfo[$k]): $($s.checked) $unit checked, $($s.flagged) finding(s)$($s.failed ? ", $($s.failed) failed" : '')$($s.skipped ? ", $($s.skipped) not checked" : '')" } }
+    L ''
+    L ('Metric checks (queries 08-12; a candidate is only reported when 30 days of metrics confirm it): ' + (@($parts) -join '; ') + '.')
+}
+$notChecked = ($CandidateStats.Values | ForEach-Object { $_.skipped } | Measure-Object -Sum).Sum
+if ($notChecked) { $warnings.Add("$notChecked candidate(s) from queries 08-12 were not checked because of -SkipMetrics. Those waste types need metrics, so they're missing from this report.") }
 if ($PriceStats.fallback -and -not $OfflinePricing) {
     $why = $PriceStats.failedLookups ? " ($($PriceStats.failedLookups) price lookup(s) failed after retries)" : ''
     $warnings.Add("$($PriceStats.fallback) finding(s) priced from pricing.json (US East, USD) because no regional price was available$why.")
@@ -742,7 +1124,7 @@ $mdPath = Join-Path $OutDir 'report.md'
 Set-Content $mdPath $md.ToString() -Encoding utf8
 
 Write-Host ''
-Write-Host "Estimated monthly savings: $(Format-Money $totals)  ($($findings.Count) findings, $([int] $exclTotal) excluded)"
+Write-Host "Estimated monthly savings: $(Format-Money $totals), high confidence $(Format-Money $highTotals)  ($($findings.Count) findings, $([int] $exclTotal) excluded)"
 foreach ($c in $coverage) { if ($c.Status -ne 'ok') { Write-Host "Tenant $($c.Tenant): $($c.Status)" -ForegroundColor Yellow } }
 Write-Host "Report: $mdPath"
 Write-Host "CSV:    $csvPath"

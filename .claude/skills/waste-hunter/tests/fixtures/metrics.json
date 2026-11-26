@@ -1,4 +1,601 @@
 {
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-orders/providers/microsoft.app/containerapps/ca-orders-legacy|requests": {
+    "value": [
+      {
+        "name": {
+          "value": "TxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 2097152,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "Requests"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "RxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 3145728,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-api/providers/microsoft.app/containerapps/ca-api-busy|requests": {
+    "value": [
+      {
+        "name": {
+          "value": "TxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 4294967296,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "Requests"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 120000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "RxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 943718400,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-jobs/providers/microsoft.app/containerapps/ca-queue-worker|requests": {
+    "value": [
+      {
+        "name": {
+          "value": "TxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 1048576,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "Requests"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "RxBytes"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 1048576,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-security/providers/microsoft.operationalinsights/workspaces/log-security-archive|ingestion volume": {
+    "value": [
+      {
+        "name": {
+          "value": "Ingestion Volume"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "count": 2400000
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "Query Count"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "count": null
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-monitoring/providers/microsoft.operationalinsights/workspaces/log-app-prod|ingestion volume": {
+    "value": [
+      {
+        "name": {
+          "value": "Ingestion Volume"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "count": 5000000
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      },
+      {
+        "name": {
+          "value": "Query Count"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "count": 3100
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-legacy/providers/microsoft.storage/storageaccounts/stlegacyexports|transactions": {
+    "value": [
+      {
+        "name": {
+          "value": "Transactions"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-legacy/providers/microsoft.storage/storageaccounts/stlegacyexports|usedcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "UsedCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 268435456000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-media/providers/microsoft.storage/storageaccounts/stmediaarchive|transactions": {
+    "value": [
+      {
+        "name": {
+          "value": "Transactions"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 52000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-media/providers/microsoft.storage/storageaccounts/stmediaarchive|usedcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "UsedCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 2308974418329.6,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-graph/providers/microsoft.storage/storageaccounts/stgraphdata|transactions": {
+    "value": [
+      {
+        "name": {
+          "value": "Transactions"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-graph/providers/microsoft.storage/storageaccounts/stgraphdata|usedcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "UsedCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 21474836480,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-web/providers/microsoft.storage/storageaccounts/stwebassets|transactions": {
+    "value": [
+      {
+        "name": {
+          "value": "Transactions"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 880000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-web/providers/microsoft.storage/storageaccounts/stwebassets|usedcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "UsedCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 42949672960,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-media/providers/microsoft.storage/storageaccounts/stmediaarchive/blobservices/default|blobcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "BlobCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 2199023255552,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-media/providers/microsoft.storage/storageaccounts/stmediaarchive/blobservices/default|transactions": {
+    "value": [
+      {
+        "name": {
+          "value": "Transactions"
+        },
+        "timeseries": []
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-web/providers/microsoft.storage/storageaccounts/stwebassets/blobservices/default|blobcapacity": {
+    "value": [
+      {
+        "name": {
+          "value": "BlobCapacity"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 32212254720,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-build/providers/microsoft.containerregistry/registries/crlegacybuild|totalpullcount": {
+    "value": [
+      {
+        "name": {
+          "value": "TotalPullCount"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-build/providers/microsoft.containerregistry/registries/crlegacybuild|storageused": {
+    "value": [
+      {
+        "name": {
+          "value": "StorageUsed"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 322122547200,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-platform/providers/microsoft.containerregistry/registries/crplatform|totalpullcount": {
+    "value": [
+      {
+        "name": {
+          "value": "TotalPullCount"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 9100,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-platform/providers/microsoft.containerregistry/registries/crplatform|storageused": {
+    "value": [
+      {
+        "name": {
+          "value": "StorageUsed"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 42949672960,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-graph/providers/microsoft.containerregistry/registries/crgraphapps|totalpullcount": {
+    "value": [
+      {
+        "name": {
+          "value": "TotalPullCount"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 0,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-graph/providers/microsoft.containerregistry/registries/crgraphapps|storageused": {
+    "value": [
+      {
+        "name": {
+          "value": "StorageUsed"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "average": 3221225472,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": []
+          }
+        ]
+      }
+    ]
+  },
+  "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-ml/providers/microsoft.cognitiveservices/accounts/oai-research|azureopenairequests": {
+    "value": [
+      {
+        "name": {
+          "value": "AzureOpenAIRequests"
+        },
+        "timeseries": [
+          {
+            "data": [
+              {
+                "total": 910000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": [
+              {
+                "name": {
+                  "value": "ModelDeploymentName"
+                },
+                "value": "gpt-ptu-prod"
+              }
+            ]
+          },
+          {
+            "data": [
+              {
+                "total": 45000,
+                "timeStamp": "2026-11-25T00:00:00Z"
+              }
+            ],
+            "metadatavalues": [
+              {
+                "name": {
+                  "value": "ModelDeploymentName"
+                },
+                "value": "gpt-4o-chat"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-build/providers/microsoft.compute/virtualmachines/vm-build-agent-02": {
     "value": [
       {

@@ -1,0 +1,37 @@
+// waste-hunter 11 · Container registries: idle, or Premium without Premium features (CANDIDATES)
+// Every registry is a candidate. The runner confirms with metrics:
+//   - idle: 0 pulls (TotalPullCount counts every client: AKS, App Service, Container Apps, docker)
+//     in 30 days. Lower confidence when a Container App still references it: scale-to-zero apps
+//     only pull when a replica starts, so deleting the registry would break the next scale-up.
+//   - oversized: Premium with no geo-replications, no private endpoints and 100 GiB or less stored;
+//     Standard would cost less.
+// READ-ONLY. Run:  az graph query -q @11-container-registries.kql --first 1000
+resources
+| where type =~ 'microsoft.containerregistry/registries'
+| extend loginServer = tolower(tostring(properties.loginServer)), regId = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.app/containerapps'
+    | mv-expand r = properties.configuration.registries
+    | extend loginServer = tolower(tostring(r.server))
+    | where isnotempty(loginServer)
+    | summarize referencedBy = make_set(name) by loginServer
+  ) on loginServer
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.containerregistry/registries/replications'
+    | extend regId = tolower(tostring(split(id, '/replications/')[0]))
+    | summarize replications = count() by regId
+  ) on regId
+| extend createdTime = todatetime(properties.creationDate)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-container-registry', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(sku.name), tier = tostring(sku.tier), sizeGb = int(null), os = '', extra = loginServer,
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('referencedBy', referencedBy, 'replications', coalesce(replications, 0),
+                             'privateEndpoints', coalesce(array_length(properties.privateEndpointConnections), 0))

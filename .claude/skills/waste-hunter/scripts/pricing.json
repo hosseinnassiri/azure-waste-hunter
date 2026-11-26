@@ -38,6 +38,30 @@
                  "P1mv3": 262.80, "P2mv3": 525.60, "EP1": 142.35, "EP2": 284.70, "EP3": 569.40, "I1v2": 412.45, "I2v2": 824.90, "I3v2": 1649.80 }
   },
 
+  "containerApps": {
+    "_about": "Consumption plan idle rates for replicas kept alive by minReplicas.",
+    "idlePerVcpuSecond": 0.000003,
+    "idlePerGiBSecond": 0.000003
+  },
+
+  "storagePerGb": {
+    "_about": "Blob data stored per GB-month (LRS, first tier). Other redundancies use the multiplier.",
+    "Hot": 0.0208, "Cool": 0.0115, "Cold": 0.0045, "Archive": 0.002,
+    "redundancyMultiplier": { "LRS": 1, "ZRS": 1.25, "GRS": 2, "RA-GRS": 2.5, "GZRS": 2.25, "RA-GZRS": 2.8 }
+  },
+
+  "containerRegistries": {
+    "unitPerDay": { "Basic": 0.1666, "Standard": 0.6666, "Premium": 1.6666 },
+    "storagePerGbMonth": 0.1,
+    "replicationUnitPerDay": 1.6666
+  },
+
+  "openAI": {
+    "_about": "Provisioned throughput per PTU-hour by deployment SKU. Fine-tuned hosting varies by model; this is a typical rate.",
+    "ptuPerHour": { "ProvisionedManaged": 2.0, "GlobalProvisionedManaged": 1.0, "DataZoneProvisionedManaged": 1.1 },
+    "fineTunedHostingPerHour": 1.7
+  },
+
   "vms": {
     "_about": "Hourly price per vCPU by size family (Linux). vCPU count comes from the size name, e.g. Standard_D4s_v5 = 4. Windows adds windowsPerVcpuHour unless licenseType is Windows_Server (Azure Hybrid Benefit).",
     "perVcpuHourByFamily": { "B": 0.0208, "A": 0.05, "D": 0.048, "E": 0.063, "F": 0.0423, "L": 0.078, "M": 0.22, "H": 0.10, "N": 0.90, "G": 0.15 },

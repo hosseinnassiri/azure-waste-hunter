@@ -11,6 +11,8 @@ is `.claude/skills/waste-hunter/`. The runner is `scripts/Invoke-WasteHunt.ps1` 
    - `az monitor metrics list`
    - `az advisor recommendation list`
    - `az consumption ...` reads and other cost *queries*
+   - `az cognitiveservices account deployment list`, because Azure OpenAI deployments aren't in
+     Resource Graph. Read only name, SKU, capacity, model and creation date from its output.
    - `az account show` / `az account list`, plus `az account set`, which only switches the local
      CLI context between tenants and must be restored to the user's original default afterwards.
 
@@ -40,6 +42,14 @@ Ask the user instead.
   resourceGroup, location, owner, app, env, createdTime, ageDays, idleDays, idleSource, sku, tier,
   sizeGb, os, extra, confidence, reason, ignored`. `07-advisor-cost.kql` adds `recommendationId,
   monthlySavings, currency`. The runner relies on this schema, so a new waste type must keep it.
+- Queries 08-12 return **candidates** plus a `checkInputs` object (only the fields the metric check
+  needs). The runner's `Confirm-Candidate` checks 30 days of metrics and turns each candidate into
+  findings or drops it as in use, so nothing is reported as idle on inventory alone. Never put env
+  vars, app settings or connection strings in `checkInputs`. A candidate type must come with
+  synthetic test cases that it should flag AND cases it should drop.
+- Anything that may be some app's data store or dependency (a storage account behind an Azure Files
+  mount, a registry a Container App references) gets low confidence and "do not delete" wording.
+  Quiet is not the same as safe to delete.
 - Exclusion: queries compute `ignored` from the tag `waste-hunter:ignore=true` (case-insensitive) and
   the runner drops those rows and counts them. Don't filter them in KQL, or the excluded count is lost.
 - Run queries from files: `az graph query -q @path/to/file.kql`. Passing KQL inline through
@@ -63,6 +73,13 @@ Ask the user instead.
   is treated as down only after 3 failed lookups in a row. Its names are inconsistent: App Service
   uses `P1 v3` and `I1 v2` but also `P0v3` and `P1mv3`, so query both spellings. Elastic Premium
   (`EP*`), Premium SSD v2 and Ultra disks have no flat monthly meter and use `pricing.json`.
+- **Strict mode throws on a missing key read with dot syntax**: on `[ordered]`, on plain hashtables,
+  on `ConvertFrom-Json -AsHashtable` output, and on any property of `$null`. Read optional fields
+  from az or API output with `Get-Key $obj 'key'` or `$h['key']`, never `$obj.key`.
+- Metric quirks: Log Analytics `Ingestion Volume` counts records, not bytes, and both it and
+  `Query Count` need `--aggregation Count`. `StorageUsed` (ACR) and capacity metrics only take hourly
+  grains, so don't combine them with daily metrics in one call. A dimension split (`--filter
+  "X eq '*'"`) returns no series at all for zero activity, which `Get-MetricStats` treats as 0.
 - In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
   them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.

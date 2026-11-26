@@ -1,0 +1,29 @@
+// waste-hunter 08 · Idle Container Apps that keep replicas running (CANDIDATES, confirmed by metrics)
+// minReplicas >= 1 keeps replicas alive, and on the Consumption plan they're billed at the idle rate
+// even with no traffic. Apps that scale to zero (minReplicas 0) cost nothing idle and are excluded.
+// The runner confirms idleness with 30 days of Requests, RxBytes and TxBytes metrics, and drops
+// any candidate with traffic.
+// Only container *resources* (cpu, memory) are read, never env vars, which can hold secrets.
+// READ-ONLY. Run:  az graph query -q @08-idle-container-apps.kql --first 1000
+resources
+| where type =~ 'microsoft.app/containerapps'
+| extend minReplicas = toint(properties.template.scale.minReplicas)
+| where minReplicas >= 1
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| extend transport       = tostring(properties.configuration.ingress.transport),
+         hasIngress      = isnotnull(properties.configuration.ingress),
+         workloadProfile = coalesce(tostring(properties.workloadProfileName), 'Consumption')
+| mv-expand c = properties.template.containers
+| extend cpu = todouble(c.resources.cpu), mem = tostring(c.resources.memory)
+| summarize cpu = sum(cpu), memory = make_list(mem)
+    by id, name, type, tenantId, subscriptionId, resourceGroup, location, owner, app, env, ignored,
+       minReplicas, transport, hasIngress, workloadProfile
+| project wasteType = 'idle-container-app', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = workloadProfile, tier = strcat('minReplicas ', minReplicas), sizeGb = minReplicas, os = '', extra = transport,
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('minReplicas', minReplicas, 'cpu', cpu, 'memory', memory, 'transport', transport,
+                             'hasIngress', hasIngress, 'workloadProfile', workloadProfile)

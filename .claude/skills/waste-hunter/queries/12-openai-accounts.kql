@@ -1,0 +1,21 @@
+// waste-hunter 12 · Azure OpenAI / AI Services deployments that bill while idle (CANDIDATES)
+// Deployments aren't in Resource Graph, so this returns the accounts. For each one the runner calls
+// `az cognitiveservices account deployment list` (read-only: names, models, SKUs, capacity; no keys)
+// and keeps deployments that bill per hour whether used or not:
+//   - provisioned throughput (ProvisionedManaged, GlobalProvisionedManaged, DataZoneProvisionedManaged)
+//   - fine-tuned model deployments (hourly hosting fee)
+// It flags those with 0 requests (AzureOpenAIRequests by ModelDeploymentName) in 30 days.
+// Pay-per-token deployments (Standard, GlobalStandard, DataZoneStandard) cost nothing idle and are skipped.
+// READ-ONLY. Run:  az graph query -q @12-openai-accounts.kql --first 1000
+resources
+| where type =~ 'microsoft.cognitiveservices/accounts'
+| where kind in~ ('OpenAI', 'AIServices')
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-openai-deployment', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (deployments + metrics)',
+          sku = tostring(sku.name), tier = '', sizeGb = int(null), os = '', extra = kind,
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('kind', kind)

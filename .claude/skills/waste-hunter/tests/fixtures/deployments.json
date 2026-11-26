@@ -1,0 +1,68 @@
+{
+  "rg-ml/oai-research": [
+    {
+      "systemData": {
+        "createdAt": "2026-07-29T22:38:54.4379121Z"
+      },
+      "sku": {
+        "name": "GlobalProvisionedManaged",
+        "capacity": 15
+      },
+      "properties": {
+        "model": {
+          "name": "gpt-4o",
+          "format": "OpenAI"
+        }
+      },
+      "name": "gpt-ptu-eval"
+    },
+    {
+      "systemData": {
+        "createdAt": "2026-08-28T22:38:54.4379121Z"
+      },
+      "sku": {
+        "name": "Standard",
+        "capacity": 1
+      },
+      "properties": {
+        "model": {
+          "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c",
+          "format": "OpenAI"
+        }
+      },
+      "name": "gpt-4o-mini-support-ft"
+    },
+    {
+      "systemData": {
+        "createdAt": "2026-05-10T22:38:54.4379121Z"
+      },
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 50
+      },
+      "properties": {
+        "model": {
+          "name": "gpt-4o",
+          "format": "OpenAI"
+        }
+      },
+      "name": "gpt-4o-chat"
+    },
+    {
+      "systemData": {
+        "createdAt": "2026-01-30T22:38:54.4379121Z"
+      },
+      "sku": {
+        "name": "ProvisionedManaged",
+        "capacity": 100
+      },
+      "properties": {
+        "model": {
+          "name": "gpt-4o",
+          "format": "OpenAI"
+        }
+      },
+      "name": "gpt-ptu-prod"
+    }
+  ]
+}

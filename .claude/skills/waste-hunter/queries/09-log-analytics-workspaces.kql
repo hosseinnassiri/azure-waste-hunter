@@ -1,0 +1,32 @@
+// waste-hunter 09 · Log Analytics workspaces: paid retention, or data nobody queries (CANDIDATES)
+// Every workspace is a candidate. The runner flags it when either:
+//   - retentionInDays is above the free period (31 days, or 90 with Microsoft Sentinel), or
+//   - it ingested records in the last 30 days but had 0 queries (alert queries count as queries).
+// Platform metrics count records, not GB, so the cost of either problem can't be computed here.
+// It shows as unknown unless billing or Advisor gives a figure. Commitment-tier sizing is covered by
+// Advisor (query 07). Per-table usage needs a workspace log query, which is outside the read-only rules.
+// READ-ONLY. Run:  az graph query -q @09-log-analytics-workspaces.kql --first 1000
+resources
+| where type =~ 'microsoft.operationalinsights/workspaces'
+| extend wsId = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.operationsmanagement/solutions' and name startswith 'SecurityInsights('
+    | project wsId = tolower(tostring(properties.workspaceResourceId)), sentinel = true
+  ) on wsId
+| extend sentinel  = coalesce(sentinel, false),
+         retention = toint(properties.retentionInDays),
+         createdTime = todatetime(properties.createdDate)
+| extend freeRetention = iff(sentinel, 90, 31),
+         ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'log-analytics-workspace', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(properties.sku.name), tier = strcat('retention ', retention, 'd'), sizeGb = retention, os = '',
+          extra = iff(sentinel, 'sentinel', ''),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('retention', retention, 'freeRetention', freeRetention, 'sentinel', sentinel,
+                             'capacityReservation', toint(properties.sku.capacityReservationLevel))

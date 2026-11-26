@@ -1,6 +1,6 @@
 ---
 name: waste-hunter
-description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
+description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, idle Container Apps, Log Analytics retention and unqueried data, idle storage accounts and unread Hot blobs, idle or oversized container registries, idle Azure OpenAI PTU and fine-tuned deployments, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
 ---
 
 # waste-hunter
@@ -11,7 +11,8 @@ a ranked report. **It never changes anything in Azure.**
 ## Non-negotiable rules
 
 - READ-ONLY. The only `az` commands allowed are `az graph query`, `az monitor metrics list`,
-  `az advisor recommendation list`, `az consumption` and other cost reads, and `az account show/list/set`.
+  `az advisor recommendation list`, `az consumption` and other cost reads,
+  `az cognitiveservices account deployment list`, and `az account show/list/set`.
   The runner enforces this with an allow list (`Invoke-AzRead`). The only other read is the public
   Azure Retail Prices API (`prices.azure.com`) for regional list prices, which gets SKU/region/currency
   filters only.
@@ -50,7 +51,9 @@ cloud; regional prices cover the public cloud and US Gov.
    It writes `reports/<timestamp>/report.md` and `findings.csv`, and restores the user's default
    subscription when it finishes.
 3. **Read `report.md`** and reply with:
-   - the total estimated monthly savings, and what share of it is *billed*, *advisor* or *estimated*
+   - the total estimated monthly savings **and the high-confidence part** (the total includes
+     low-confidence findings whose advice may be "keep it"), and what share is *billed*, *advisor*
+     or *estimated*
    - the top findings (around 5) by cost, with their confidence and reason
    - **coverage problems first and plainly**: any tenant marked `failed`/`partial`, or any
      subscription Resource Graph couldn't see. "0 findings" from a scope that wasn't fully read is
@@ -76,6 +79,15 @@ and a suggested action (text only).
 | 5 | `05-vms-stopped-not-deallocated.kql` | `PowerState/stopped` | high. Idle time is the last non-zero CPU datapoint from 90 days of Azure Monitor metrics |
 | 6 | `06-old-snapshots.kql` | `timeCreated` older than 90 days | high if over 365 days and the source disk exists; medium otherwise; low if the source disk was deleted (may be the only copy) or it's Azure Backup data |
 | 7 | `07-advisor-cost.kql` | Advisor Cost recommendations (not dismissed or postponed) | Advisor impact High→high, Medium→medium, Low→low |
+| 8 | `08-idle-container-apps.kql` | `minReplicas` 1 or more, with 0 requests and under 100 MiB of network traffic in 30 days | high with HTTP ingress; medium without HTTP ingress (judged by network only) or on a dedicated workload profile |
+| 9 | `09-log-analytics-workspaces.kql` | retention above the free period (31 days, 90 with Sentinel), or records ingested but 0 queries in 30 days | medium when unqueried; low for retention only (may be compliance). Cost unknown: metrics count records, not GB |
+| 10 | `10-idle-storage-accounts.kql` | 0 transactions in 30 days; or 100 GiB or more of Hot blobs with 0 GetBlob reads (saving = Hot minus Cool) | idle: high (medium on Cool/Cold/Archive). **Low when a Container App in the same resource group mounts Azure Files**: it may be the app's data. Unread Hot: medium |
+| 11 | `11-container-registries.kql` | 0 pulls by any client in 30 days; or Premium with no replications, no private endpoints and 100 GiB or less stored | idle: high; **low when a Container App still references it**. Oversized: medium |
+| 12 | `12-openai-accounts.kql` | PTU or fine-tuned deployments (both bill hourly) with 0 requests in 30 days; pay-per-token deployments are skipped | high; medium if created under 30 days ago |
+
+Types 8-12 are **candidates confirmed by 30 days of metrics**. One whose metrics show use is dropped,
+not reported. Resources created under 30 days ago aren't judged. With `-SkipMetrics` these types
+are left out entirely, and the report says so.
 
 **No duplicates with Advisor.** A recommendation whose impacted resource matches a finding from 1–6 is
 merged into that finding: the confidence goes up one level and the reason gets "corroborated by
