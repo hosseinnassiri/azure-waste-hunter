@@ -71,8 +71,9 @@ Ask the user instead.
 ## Validating changes
 
 ```powershell
-# Offline, synthetic, no Azure calls. Must produce a populated report:
-pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -FixtureDir ./.claude/skills/waste-hunter/tests/fixtures -OutDir ./.claude/skills/waste-hunter/tests/sample-output
+# Synthetic, no Azure calls (live CAD prices from the Retail Prices API). Must produce a populated
+# report. This regenerates the committed sample, which is kept in CAD:
+pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -FixtureDir ./.claude/skills/waste-hunter/tests/fixtures -Currency CAD -OutDir ./.claude/skills/waste-hunter/tests/sample-output
 # Each query against the live login (read-only):
 Get-ChildItem .claude/skills/waste-hunter/queries/*.kql | % { az graph query -q "@$($_.FullName)" --first 5 --query count -o tsv }
 # Full live scan:

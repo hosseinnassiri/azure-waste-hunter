@@ -57,8 +57,9 @@ Output goes to `reports/<timestamp>/`:
   run yourself if you decide to act.
 
 See [a sample report](.claude/skills/waste-hunter/tests/sample-output/report.md). It's generated
-from **synthetic** data with `-FixtureDir .claude/skills/waste-hunter/tests/fixtures`, so you can see
-the format without touching Azure.
+from **synthetic** data with `-FixtureDir .claude/skills/waste-hunter/tests/fixtures -Currency CAD`,
+so you can see the format without touching Azure. Its estimates are live CAD list prices for 9
+regions; its billed and Advisor amounts are in USD, which shows how mixed currencies are reported.
 
 ## Excluding resources
 
