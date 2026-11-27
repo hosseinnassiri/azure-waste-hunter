@@ -26,6 +26,9 @@ $SkillDir = Split-Path -Parent $TestsDir
 $RepoDir  = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $SkillDir))
 $Runner   = Join-Path $SkillDir 'scripts/Invoke-WasteHunt.ps1'
 $Fixtures = Join-Path $TestsDir 'fixtures'
+# Every script the runner loads (the runner, lib/ and types/), so the guard checks see all of it
+$ScriptFiles = @(Get-Item $Runner) + @(Get-ChildItem (Join-Path $SkillDir 'scripts') -Recurse -Filter '*.ps1' | Where-Object { $_.FullName -ne (Get-Item $Runner).FullName } | Sort-Object FullName)
+$AllSource = (@($ScriptFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n")
 $Work     = Join-Path ([IO.Path]::GetTempPath()) ("waste-hunter-tests-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $Work | Out-Null
 
@@ -102,7 +105,7 @@ try {
         }
     }
     Test 'Guard: allow list is exactly the read-only command set' {
-        $src = Get-Content $Runner -Raw
+        $src = $AllSource
         Assert ($src -match '\$AllowedAz = @\(([\s\S]*?)\n\)') 'AllowedAz block not found'
         $body = ($Matches[1] -split "`n" | ForEach-Object { $_ -replace '#.*$', '' }) -join "`n"   # comments may contain apostrophes
         $cmds = @([regex]::Matches($body, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) | Sort-Object
@@ -111,7 +114,7 @@ try {
         Assert-Equal ($expected -join ', ') ($cmds -join ', ') 'allowed az commands'
     }
     Test 'Guard: az is only ever invoked inside Invoke-AzRead' {
-        $src = Get-Content $Runner -Raw
+        $src = $AllSource
         Assert-Equal 1 ([regex]::Matches($src, '&\s*az\s')).Count 'number of direct az invocations'
         # The az call lives in Invoke-AzProcess, which only Invoke-AzRead may call (after the allow-list check)
         Assert ($src -match '(?s)function Invoke-AzProcess.*?&\s*az\s') 'the az call must be inside Invoke-AzProcess'
@@ -120,8 +123,14 @@ try {
         Assert-Equal 'Invoke-AzRead' (($callers | Sort-Object -Unique) -join ', ') 'functions that call Invoke-AzProcess'
         Assert ($src -notmatch 'Invoke-Expression|\biex\b|Start-Process\s+az') 'runner must not shell out to az any other way'
     }
+    Test 'Guard: the runner loads every script file under scripts/ (none escapes the guard checks)' {
+        Assert ($ScriptFiles.Count -ge 7) "expected the runner plus 6+ lib files, found $($ScriptFiles.Count)"
+        foreach ($f in @($ScriptFiles | Select-Object -Skip 1)) {
+            Assert ((Get-Content $Runner -Raw).Contains($f.BaseName) -or $f.DirectoryName -like '*types') "$($f.Name) is not loaded by the runner"
+        }
+    }
     Test 'Guard: the only external endpoint is the Retail Prices API, by GET' {
-        $src = Get-Content $Runner -Raw
+        $src = $AllSource
         $urls = @([regex]::Matches($src, 'https://[a-z0-9.-]+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
         foreach ($u in $urls) { Assert ($u -in 'https://prices.azure.com', 'https://portal.azure.com') "unexpected endpoint $u" }
         Assert ($src -notmatch "Invoke-RestMethod[^\n]*-Method\s+(Post|Put|Patch|Delete)") 'price API must be GET only'

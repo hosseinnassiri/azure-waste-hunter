@@ -189,7 +189,8 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
   queries/01..23-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23: metric-confirmed candidates)
-  scripts/Invoke-WasteHunt.ps1              runner: scan, idle time, cost, merge, rank, report
+  scripts/Invoke-WasteHunt.ps1              runner: allow list, scope, scan, merge, rank
+  scripts/lib/*.ps1                         its functions (az reads, metrics, pricing, waste-type checks) and the report writer
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
   scripts/rg-owners.kql                     resource group owner tags (owner fallback)
   scripts/pricing.json                      fallback list prices

@@ -1,7 +1,9 @@
 # azure-waste-hunter
 
 A Claude Code skill that finds wasted spend in an Azure tenant and writes a ranked report. The skill
-is `.claude/skills/waste-hunter/`. The runner is `scripts/Invoke-WasteHunt.ps1` (PowerShell 7.5+).
+is `.claude/skills/waste-hunter/`. The runner is `scripts/Invoke-WasteHunt.ps1` (PowerShell 7.5+); its
+functions are in `scripts/lib/*.ps1`, dot-sourced into the runner's scope. The guard tests scan every
+script under `scripts/`, so all `az` calls must still go through `Invoke-AzRead` (`lib/AzRead.ps1`).
 
 ## Hard rules
 
