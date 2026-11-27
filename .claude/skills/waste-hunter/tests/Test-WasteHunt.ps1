@@ -132,6 +132,29 @@ try {
             Assert ($p -in $deny) "missing deny rule $p"
         }
     }
+    Test 'Settings: deny rules block writes, secrets and shells but never the allowed reads' {
+        $deny = @((Get-Content (Join-Path $RepoDir '.claude/settings.json') -Raw | ConvertFrom-Json).permissions.deny)
+        # A rule's * matches any text, spaces included
+        $rx = @($deny | Where-Object { $_ -like 'Bash(*)' } | ForEach-Object { '^' + ([regex]::Escape($_.Substring(5, $_.Length - 6)) -replace '\\\*', '.*') + '$' })
+        $blocked = { param($cmd) @($rx | Where-Object { $cmd -match $_ }).Count -gt 0 }
+        $reads = @(
+            'az graph query -q @C:/repo/.claude/skills/waste-hunter/queries/01-unattached-disks.kql --first 5 --query count -o tsv'
+            'az monitor metrics list --resource /subscriptions/0000/resourceGroups/rg-backup-restore/providers/Microsoft.Compute/virtualMachines/vm-setup --metric "Percentage CPU" --interval P1D --aggregation Maximum'
+            'az advisor recommendation list --category Cost'
+            'az consumption usage list --subscription 0000 --start-date 2026-10-27 --end-date 2026-11-26'
+            'az cognitiveservices account deployment list -g rg-ml -n oai-research --subscription 0000'
+            'az account show', 'az account list --all', 'az account set --subscription 0000-1111'
+            'az extension show -n resource-graph', 'az extension add -n resource-graph')     # add: local CLI change, asked first (SKILL.md)
+        foreach ($c in $reads) { Assert (-not (& $blocked $c)) "deny rules block an allowed read: $c" }
+        $writes = @(
+            'az webapp config appsettings set -g rg -n app --settings X=1', 'az keyvault set-policy -n kv --upn x', 'az network nic ip-config add -g rg --nic-name n -n c'
+            'az vm identity assign -g rg -n vm', 'az acr import -n cr --source x', 'az vm disk attach -g rg --vm-name vm --name d', 'az webapp deployment slot swap -g rg -n app --slot s'
+            'az sql db restore -g rg -s srv -n db', 'az aks upgrade -g rg -n aks', 'az webapp up', 'az webapp deploy -g rg -n app --src-path x.zip', 'az containerapp secret list -g rg -n ca --show-values'
+            'az storage account keys renew -g rg -n st --key primary', 'az cosmosdb keys regenerate -g rg -n db --key-kind primary', 'az storage blob upload -f x -c c -n n'
+            'az storage blob download -c c -n n -f x', 'az containerapp exec -g rg -n ca', 'az ssh vm -g rg -n vm', 'az network bastion ssh -n bas -g rg --target-resource-id x')
+        foreach ($c in $writes) { Assert (& $blocked $c) "deny rules do not block: $c" }
+        foreach ($b in @($deny | Where-Object { $_ -like 'Bash(*)' })) { Assert ("PowerShell$($b.Substring(4))" -in $deny) "no PowerShell twin for $b" }
+    }
     Test 'Pricing: pricing.json parses and has every section the runner reads' {
         $p = Get-Content (Join-Path $SkillDir 'scripts/pricing.json') -Raw | ConvertFrom-Json -AsHashtable
         foreach ($k in 'disks', 'snapshotsPerGb', 'publicIps', 'appServicePlans', 'containerApps', 'storagePerGb', 'containerRegistries', 'openAI', 'network', 'sqlDatabase', 'vms') {

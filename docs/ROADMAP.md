@@ -14,9 +14,9 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 ## 1. Correctness
 
 | Item | Status |
-|---|---|
+| --- | --- |
 | **Partial savings reported at the whole bill.** Tier changes (Premium disk to Standard SSD, Hot to Cool, Premium registry to Standard) and retention-only Log Analytics findings used the resource's full 30-day bill as the saving. They now use the price difference, and the bill is shown as context. | done |
-| **Deny-rule gaps** in `.claude/settings.json`: `set`, `add`, `remove`, `assign`, `import`, `swap`, `failover`, `restore`, `upgrade`, `regenerate`/`renew`, `upload`/`download`, `containerapp secret`. `az account set` must stay allowed. Tightening only, and needs the user's approval. | proposed |
+| **Deny-rule gaps** in `.claude/settings.json`: `set`, `add`, `remove`, `assign`, `import`, `swap`, `failover`, `restore`, `upgrade`, `regenerate`/`renew`, `upload`/`download`, `containerapp secret`. Added 31 patterns for both Bash and PowerShell, covering writes, secrets, data transfer and exec/ssh; a test checks they block representative writes but none of the allowed reads (it caught `az * deploy*` blocking `cognitiveservices account deployment list`). | done |
 | **Skill description** listed only waste types 1–12, so requests about types 13–19 might not trigger the skill. | done |
 | **Prefix match in "not rechecked".** A failed check on `.../st1` hid the resolution of `.../st10`. It now matches the ID itself or its children only. | done |
 | **Deduplication by ID only.** Two waste types on one resource kept only the first. Findings are now deduplicated by type + ID, and an Advisor recommendation merges into one finding only. | done |
@@ -38,7 +38,7 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 ## 3. New waste types, by likely savings
 
 | Priority | Type | Detection | Typical cost |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | ★★★ | DDoS Protection plan with no virtual networks attached | Resource Graph | ~USD 2,900/month each |
 | ★★★ | Azure Firewall with ~0 data processed | metric-confirmed | USD 900–1,300+/month |
 | ★★★ | App Service plan where every app is stopped (#4 misses it because the plan isn't empty) | Resource Graph | full plan price |
