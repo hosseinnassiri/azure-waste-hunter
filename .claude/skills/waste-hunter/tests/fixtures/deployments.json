@@ -1,7 +1,9 @@
 {
   "rg-ml/oai-research": [
     {
-      "name": "gpt-ptu-eval",
+      "systemData": {
+        "createdAt": "2026-07-30T01:06:34.3779679Z"
+      },
       "properties": {
         "model": {
           "format": "OpenAI",
@@ -12,12 +14,12 @@
         "capacity": 15,
         "name": "GlobalProvisionedManaged"
       },
-      "systemData": {
-        "createdAt": "2026-07-29T22:55:01.4229984Z"
-      }
+      "name": "gpt-ptu-eval"
     },
     {
-      "name": "gpt-4o-mini-support-ft",
+      "systemData": {
+        "createdAt": "2026-08-29T01:06:34.3779679Z"
+      },
       "properties": {
         "model": {
           "format": "OpenAI",
@@ -28,12 +30,12 @@
         "capacity": 1,
         "name": "Standard"
       },
-      "systemData": {
-        "createdAt": "2026-08-28T22:55:01.4229984Z"
-      }
+      "name": "gpt-4o-mini-support-ft"
     },
     {
-      "name": "gpt-4o-chat",
+      "systemData": {
+        "createdAt": "2026-05-11T01:06:34.3779679Z"
+      },
       "properties": {
         "model": {
           "format": "OpenAI",
@@ -44,12 +46,12 @@
         "capacity": 50,
         "name": "GlobalStandard"
       },
-      "systemData": {
-        "createdAt": "2026-05-10T22:55:01.4229984Z"
-      }
+      "name": "gpt-4o-chat"
     },
     {
-      "name": "gpt-ptu-prod",
+      "systemData": {
+        "createdAt": "2026-01-31T01:06:34.3779679Z"
+      },
       "properties": {
         "model": {
           "format": "OpenAI",
@@ -60,9 +62,7 @@
         "capacity": 100,
         "name": "ProvisionedManaged"
       },
-      "systemData": {
-        "createdAt": "2026-01-30T22:55:01.4229984Z"
-      }
+      "name": "gpt-ptu-prod"
     }
   ]
 }

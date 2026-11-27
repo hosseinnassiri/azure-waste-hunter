@@ -1,0 +1,43 @@
+// waste-hunter 22 · VM backups whose source VM no longer exists
+// Deleting a VM doesn't delete its backups. The vault keeps billing the protected-instance fee (while
+// protection runs) and the backup storage of every retained recovery point. Only VMs whose
+// subscription is in this scan's scope are judged, so a VM outside the scope isn't taken as deleted.
+// These may be the ONLY copy of a deleted VM's data, kept on purpose, so confidence is always low.
+// Tags and owner come from the vault (backup items have none).
+// READ-ONLY. Run:  az graph query -q @22-orphaned-vm-backups.kql --first 1000
+recoveryservicesresources
+| where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
+| where tostring(properties.backupManagementType) =~ 'AzureIaasVM'
+| extend sourceId = tolower(tostring(properties.sourceResourceId)),
+         protectionState = tostring(properties.protectionState),
+         vaultId = tolower(extract(@'(?i)^(.*/vaults/[^/]+)/', 1, id))
+| extend sourceSub = tolower(extract(@'(?i)^/subscriptions/([^/]+)/', 1, sourceId))
+| join kind=inner (
+    resourcecontainers
+    | where type =~ 'microsoft.resources/subscriptions'
+    | project sourceSub = tolower(subscriptionId)
+  ) on sourceSub
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.compute/virtualmachines'
+    | project sourceId = tolower(id), vmExists = true
+  ) on sourceId
+| where isnull(vmExists)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.recoveryservices/vaults'
+    | project vaultId = tolower(id), rTags = tags, vaultLocation = location, vaultName = name
+  ) on vaultId
+| extend tags = rTags
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'orphaned-vm-backup', id, name = strcat(vaultName, '/', tostring(properties.friendlyName)), type, tenantId, subscriptionId, resourceGroup,
+          location = vaultLocation, owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null),
+          idleSource = strcat('last backup ', tostring(properties.lastBackupTime)),
+          sku = tostring(properties.workloadType), tier = protectionState, sizeGb = int(null), os = '', extra = sourceId,
+          confidence = 'low',
+          reason = strcat('Backups of VM ', tostring(properties.friendlyName), ', which no longer exists (protection state ', protectionState,
+                          '). Retained recovery points keep billing backup storage', iff(protectionState =~ 'Protected', ', plus the protected-instance fee', '')),
+          ignored

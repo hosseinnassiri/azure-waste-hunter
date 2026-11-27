@@ -1,0 +1,29 @@
+// waste-hunter 20 · DDoS Network Protection plans that protect nothing
+// A plan bills a fixed monthly fee (about USD 2,900) from the day it's created, whether or not any
+// virtual network uses it. One plan can protect VNets in any subscription of the tenant, so a plan
+// counts as idle only when its own list of VNets and public IPs is empty AND no VNet in scope
+// links to it. Free DDoS infrastructure protection stays on for every public IP without a plan.
+// READ-ONLY. Run:  az graph query -q @20-idle-ddos-protection-plans.kql --first 1000
+resources
+| where type =~ 'microsoft.network/ddosprotectionplans'
+| extend planId = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.network/virtualnetworks'
+    | where isnotempty(tostring(properties.ddosProtectionPlan.id))
+    | summarize linkedVnets = count() by planId = tolower(tostring(properties.ddosProtectionPlan.id))
+  ) on planId
+| extend planVnets = coalesce(array_length(properties.virtualNetworks), 0),
+         planIps   = coalesce(array_length(properties.publicIPAddresses), 0),
+         linkedVnets = coalesce(linkedVnets, 0)
+| where planVnets == 0 and planIps == 0 and linkedVnets == 0
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-ddos-protection-plan', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = 'Network Protection', tier = '', sizeGb = 0, os = '', extra = '',
+          confidence = 'high',
+          reason = 'DDoS Network Protection plan protects no virtual networks or public IPs, but bills its fixed monthly fee',
+          ignored

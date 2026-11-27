@@ -1,0 +1,21 @@
+// waste-hunter 23 · Idle Azure Firewalls (CANDIDATES, confirmed by metrics)
+// A firewall bills its deployment fee every hour it's allocated (Standard about USD 900/month,
+// Premium about USD 1,300), whether or not traffic flows. Deallocated firewalls (no IP configuration)
+// don't bill and are skipped. The runner flags one with 0 application and network rule hits and under
+// 1 GiB processed in 30 days.
+// READ-ONLY. Run:  az graph query -q @23-idle-firewalls.kql --first 1000
+resources
+| where type =~ 'microsoft.network/azurefirewalls'
+| extend hub = tostring(properties.sku.name) =~ 'AZFW_Hub',
+         ipConfigs = coalesce(array_length(properties.ipConfigurations), 0)
+| where ipConfigs > 0 or (hub and isnotempty(tostring(properties.hubIPAddresses.privateIPAddress)))
+| extend skuTier = tostring(properties.sku.tier)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-firewall', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = skuTier, tier = iff(hub, 'hub', 'vnet'), sizeGb = int(null), os = '', extra = tostring(properties.firewallPolicy.id),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('tier', skuTier, 'hub', hub)

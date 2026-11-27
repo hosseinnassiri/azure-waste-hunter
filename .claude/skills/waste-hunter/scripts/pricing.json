@@ -80,7 +80,9 @@
                            "VpnGw1AZ": 0.21, "VpnGw2AZ": 0.54, "VpnGw3AZ": 1.38, "VpnGw4AZ": 2.31, "VpnGw5AZ": 4.02 },
     "erGatewayPerHour": { "Standard": 0.19, "HighPerformance": 0.49, "UltraPerformance": 1.87,
                           "ErGw1AZ": 0.361, "ErGw2AZ": 0.632, "ErGw3AZ": 2.151 },
-    "bastionPerHour": { "Basic": 0.19, "Standard": 0.29, "Premium": 0.45, "StandardAdditional": 0.14, "PremiumAdditional": 0.22 }
+    "bastionPerHour": { "Basic": 0.19, "Standard": 0.29, "Premium": 0.45, "StandardAdditional": 0.14, "PremiumAdditional": 0.22 },
+    "ddosPlanPerHour": 4.032258,
+    "firewallPerHour": { "Basic": 0.395, "Standard": 1.25, "Premium": 1.75 }
   },
 
   "sqlDatabase": {

@@ -1,6 +1,6 @@
 ---
 name: waste-hunter
-description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, idle Container Apps, Log Analytics retention and unqueried data, idle storage accounts and unread Hot blobs, idle or oversized container registries, idle Azure OpenAI PTU and fine-tuned deployments, load balancers and Application Gateways with no backends, idle NAT, VPN and ExpressRoute gateways, idle Bastion hosts, idle SQL databases, Premium disks on long-deallocated VMs, empty resource groups, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
+description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, idle Container Apps, Log Analytics retention and unqueried data, idle storage accounts and unread Hot blobs, idle or oversized container registries, idle Azure OpenAI PTU and fine-tuned deployments, load balancers and Application Gateways with no backends, idle NAT, VPN and ExpressRoute gateways, idle Bastion hosts, idle SQL databases, Premium disks on long-deallocated VMs, empty resource groups, DDoS protection plans protecting nothing, App Service plans whose apps are all stopped, backups of deleted VMs, idle Azure Firewalls, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
 ---
 
 # waste-hunter
@@ -94,8 +94,12 @@ and a suggested action (text only).
 | 17 | `17-idle-sql-databases.kql` | SQL database (not in a pool, not auto-pausing serverless) with 0 successful connections in 30 days | high |
 | 18 | `18-premium-disks-on-deallocated-vms.kql` | Premium SSD attached to a VM with no CPU activity for 30+ days; saving = Premium tier minus the same Standard SSD tier | high at 60+ days, medium at 30-59 |
 | 19 | `19-empty-resource-groups.kql` | resource group with no resources (managed and Azure Backup groups skipped); free, clutter only | medium (a few types aren't indexed by Resource Graph) |
+| 20 | `20-idle-ddos-protection-plans.kql` | DDoS Network Protection plan with no VNets or public IPs, and no VNet in scope linking to it (fixed fee, about USD 2,900/month) | high |
+| 21 | `21-app-service-plans-all-apps-stopped.kql` | paid plan whose every app and slot is stopped (stopping an app doesn't stop the bill) | high; low for free tiers |
+| 22 | `22-orphaned-vm-backups.kql` | VM backup items whose source VM is gone (only VMs in subscriptions in scope are judged); cost unknown | **low, with "do not delete" wording**: it may be the only copy |
+| 23 | `23-idle-firewalls.kql` | allocated Azure Firewall with 0 rule hits and under 1 GiB processed in 30 days (deallocated firewalls skipped) | high under 100 MiB; medium otherwise (DNAT has no hit metric) |
 
-Types 8-12 and 16-18 are **candidates confirmed by 30 days of metrics**. One whose metrics show use is dropped,
+Types 8-12, 16-18 and 23 are **candidates confirmed by 30 days of metrics**. One whose metrics show use is dropped,
 not reported. Resources created under 30 days ago aren't judged. With `-SkipMetrics` these types
 are left out entirely, and the report says so.
 

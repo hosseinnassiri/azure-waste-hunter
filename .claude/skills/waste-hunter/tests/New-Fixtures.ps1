@@ -248,6 +248,36 @@ $rgRow = Row 'empty-resource-group' $D 'rg-old-poc' 'x' 'x' 'eastus' (@{ env = '
 $rgRow.id = "/subscriptions/$D/resourceGroups/rg-old-poc"; $rgRow.name = 'rg-old-poc'; $rgRow.type = 'microsoft.resources/subscriptions/resourcegroups'
 Save '19-empty-resource-groups.json' @($rgRow)
 
+# ---- Phase 4: DDoS plans, all-stopped App Service plans, backups of deleted VMs, idle firewalls
+Save '20-idle-ddos-protection-plans.json' @(
+    (Row 'idle-ddos-protection-plan' $P 'rg-net' 'Microsoft.Network/ddosProtectionPlans' 'ddos-legacy-plan' 'eastus' (@{ owner = 'netops@example.com'; env = 'prod'
+        sku = 'Network Protection'; sizeGb = 0; reason = 'DDoS Network Protection plan protects no virtual networks or public IPs, but bills its fixed monthly fee' } + $unk)))
+Save '21-app-service-plans-all-apps-stopped.json' @(
+    (Row 'stopped-app-service-plan' $P 'rg-intranet' $asp 'asp-intranet-old' 'eastus' (@{ owner = 'web@example.com'; app = 'intranet'; env = 'prod'
+        sku = 'P1v3'; tier = 'PremiumV3'; sizeGb = 1; os = 'Windows'; extra = '2'
+        reason = 'All 2 app(s) on this plan are stopped (app-intranet, app-intranet-api), but the plan bills per instance (PremiumV3 P1v3 x1)' } + $unk)),
+    (Row 'stopped-app-service-plan' $D 'rg-sandbox' $asp 'asp-free-stopped' 'eastus' (@{ sku = 'F1'; tier = 'Free'; sizeGb = 1; os = 'Linux'; extra = '1'; confidence = 'low'
+        reason = 'All 1 app(s) on this plan are stopped (app-demo), but the plan bills per instance (Free F1 x1); free/consumption tier, no charge' } + $unk)))
+$bkName = 'rsv-dev/backupFabrics/Azure/protectionContainers/IaasVMContainer;iaasvmcontainerv2;rg-legacy;vm-old01/protectedItems/VM;iaasvmcontainerv2;rg-legacy;vm-old01'
+$bk = Row 'orphaned-vm-backup' $D 'rg-backup' 'Microsoft.RecoveryServices/vaults' $bkName 'eastus' @{ owner = 'platform@example.com'; env = 'dev'
+    idleSource = "last backup $(Ago 75)"; sku = 'VM'; tier = 'ProtectionStopped'; extra = (Rid $D 'rg-legacy' $vm 'vm-old01').ToLower(); confidence = 'low'
+    reason = 'Backups of VM vm-old01, which no longer exists (protection state ProtectionStopped). Retained recovery points keep billing backup storage' }
+$bk.name = 'rsv-dev/vm-old01'; $bk.type = 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
+Save '22-orphaned-vm-backups.json' @($bk)
+$fwT = 'Microsoft.Network/azureFirewalls'
+function FwRow($sub, $rg, $name, $tierName, [bool] $hub, [hashtable] $x = @{}) {
+    $r = Row 'idle-firewall' $sub $rg $fwT $name 'eastus' (@{ sku = $tierName; tier = ($hub ? 'hub' : 'vnet'); confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)
+    $r.checkInputs = [ordered]@{ tier = $tierName; hub = $hub }
+    $r
+}
+$fwIdle = FwRow $P 'rg-net' 'fw-hub-legacy' 'Premium' $false @{ owner = 'netops@example.com'; env = 'prod' }
+$fwDnat = FwRow $D 'rg-net-dev' 'fw-dev-dnat' 'Standard' $false @{ env = 'dev' }
+$fwBusy = FwRow $P 'rg-net' 'fw-prod-egress' 'Standard' $false @{ owner = 'netops@example.com'; env = 'prod' }
+Save '23-idle-firewalls.json' @($fwIdle, $fwDnat, $fwBusy)
+$metrics["$($fwIdle.id.ToLower())|dataprocessed"] = Set-Metrics $fwIdle.id ([ordered]@{ DataProcessed = 0; ApplicationRuleHit = 0; NetworkRuleHit = 0 })
+$metrics["$($fwDnat.id.ToLower())|dataprocessed"] = Set-Metrics $fwDnat.id ([ordered]@{ DataProcessed = 300MB; ApplicationRuleHit = 0; NetworkRuleHit = 0 })   # flagged, medium
+$metrics["$($fwBusy.id.ToLower())|dataprocessed"] = Set-Metrics $fwBusy.id ([ordered]@{ DataProcessed = 800GB; ApplicationRuleHit = 1200000; NetworkRuleHit = 54000 })   # dropped
+
 # Resource group owner tags: the fallback owner for findings whose resource has no owner tag
 Save 'rg-owners.json' @(
     @{ subscriptionId = $D; resourceGroup = 'rg-legacy'; owner = 'legacy-team@example.com' },

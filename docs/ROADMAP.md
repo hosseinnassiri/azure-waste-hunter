@@ -37,10 +37,10 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 
 | Priority | Type | Detection | Typical cost |
 | --- | --- | --- | --- |
-| ★★★ | DDoS Protection plan with no virtual networks attached | Resource Graph | ~USD 2,900/month each |
-| ★★★ | Azure Firewall with ~0 data processed | metric-confirmed | USD 900–1,300+/month |
-| ★★★ | App Service plan where every app is stopped (#4 misses it because the plan isn't empty) | Resource Graph | full plan price |
-| ★★ | Backup items whose source VM or database was deleted | Resource Graph `recoveryservicesresources` | protected-instance fee + storage |
+| ★★★ | DDoS Protection plan with no virtual networks attached — **done** (query 20) | Resource Graph | ~USD 2,900/month each |
+| ★★★ | Azure Firewall with ~0 data processed — **done** (query 23) | metric-confirmed | USD 900–1,300+/month |
+| ★★★ | App Service plan where every app is stopped — **done** (query 21) | Resource Graph | full plan price |
+| ★★ | Backup items whose source VM was deleted — **done for VMs** (query 22; databases still to do) | Resource Graph `recoveryservicesresources` | protected-instance fee + storage |
 | ★★ | Cosmos DB provisioned RU/s with ~0 requests | metric `TotalRequests` | often hundreds/month |
 | ★★ | Idle Redis, API Management, Service Bus/Event Hubs Premium, Synapse dedicated pools, Fabric/Power BI Embedded capacities | metric-confirmed | high |
 | ★ | Full (non-incremental) snapshots that could be incremental | Resource Graph | storage saving |
@@ -71,5 +71,5 @@ expected finding set.
 
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
-3. Value: exclusions file (done), then DDoS, Firewall, all-stopped plans, orphaned backups.
+3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 still need a live check once `resource-graph` is installed).
 4. Product: split the runner with one record per type (do this before most of section 3), scheduled CI, trends, MCA billing.

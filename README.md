@@ -30,8 +30,12 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 17 | Idle SQL databases | 0 successful connections in 30 days |
 | 18 | Premium disks on long-deallocated VMs | VM off 30+ days, so the disk could be Standard SSD meanwhile |
 | 19 | Empty resource groups | free, but clutter |
+| 20 | DDoS protection plans protecting nothing | no VNets or public IPs; the plan bills about USD 2,900/month regardless |
+| 21 | App Service plans whose apps are all stopped | stopped apps still bill their plan's instances |
+| 22 | Backups of deleted VMs | the vault keeps billing for retained recovery points (low confidence: may be the only copy) |
+| 23 | Idle Azure Firewalls | 0 rule hits and under 1 GiB processed in 30 days |
 
-Types 8–12 and 16–18 start as candidates from Resource Graph and are only reported when 30 days of Azure
+Types 8–12, 16–18 and 23 start as candidates from Resource Graph and are only reported when 30 days of Azure
 Monitor metrics confirm them. Anything that may be an app's data store or dependency (a storage
 account behind an Azure Files mount, a registry a Container App pulls from) is rated low confidence
 with a "do not delete" note.
@@ -184,7 +188,7 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/settings.json                       deny rules backing those rules
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
-  queries/01..19-*.kql                      one Resource Graph query per waste type (08-12, 16-18: metric-confirmed candidates)
+  queries/01..23-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23: metric-confirmed candidates)
   scripts/Invoke-WasteHunt.ps1              runner: scan, idle time, cost, merge, rank, report
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
   scripts/rg-owners.kql                     resource group owner tags (owner fallback)

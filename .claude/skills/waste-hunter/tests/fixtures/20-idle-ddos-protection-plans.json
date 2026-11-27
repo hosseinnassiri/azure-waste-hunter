@@ -1,0 +1,27 @@
+[
+  {
+    "wasteType": "idle-ddos-protection-plan",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-net/providers/Microsoft.Network/ddosProtectionPlans/ddos-legacy-plan",
+    "name": "ddos-legacy-plan",
+    "type": "microsoft.network/ddosprotectionplans",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-net",
+    "location": "eastus",
+    "owner": "netops@example.com",
+    "app": "",
+    "env": "prod",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "unknown (not exposed by Resource Graph)",
+    "sku": "Network Protection",
+    "tier": "",
+    "sizeGb": 0,
+    "os": "",
+    "extra": "",
+    "confidence": "high",
+    "reason": "DDoS Network Protection plan protects no virtual networks or public IPs, but bills its fixed monthly fee",
+    "ignored": 0
+  }
+]

@@ -74,7 +74,7 @@ try {
                 'createdTime', 'ageDays', 'idleDays', 'idleSource', 'sku', 'tier', 'sizeGb', 'os', 'extra', 'confidence', 'reason', 'ignored'
 
     Test 'Queries: every file is marked read-only and uses the shared column set' {
-        Assert ($queries.Count -ge 19) "expected 19+ queries, found $($queries.Count)"
+        Assert ($queries.Count -ge 23) "expected 23+ queries, found $($queries.Count)"
         foreach ($q in $queries) {
             $t = Get-Content $q.FullName -Raw
             Assert ($t -match 'READ-ONLY') "$($q.Name) has no READ-ONLY note"
@@ -180,7 +180,9 @@ try {
         'old-snapshot|snap-vm-old01-osdisk', 'orphaned-nic|aks-nodepool1-nic-7', 'orphaned-nic|nic-vm-old01', 'oversized-container-registry|crplatform',
         'premium-disk-deallocated-vm|vm-retired-app_OsDisk', 'unassociated-public-ip|pip-old-lb-frontend', 'unassociated-public-ip|pip-test-dyn',
         'unassociated-public-ip|pip-vm-old01', 'unattached-disk|asrseeddisk-web01-a1b2c3', 'unattached-disk|disk-sql-data-old', 'unattached-disk|disk-temp-build',
-        'vm-stopped-not-deallocated|vm-build-agent-02', 'vm-stopped-not-deallocated|vm-win-jumpbox')
+        'vm-stopped-not-deallocated|vm-build-agent-02', 'vm-stopped-not-deallocated|vm-win-jumpbox',
+        'idle-ddos-protection-plan|ddos-legacy-plan', 'stopped-app-service-plan|asp-intranet-old', 'stopped-app-service-plan|asp-free-stopped',
+        'orphaned-vm-backup|rsv-dev/vm-old01', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat')
 
     Test 'Findings: exactly the expected set (every flag and every drop is intentional)' {
         $got = @($base.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)" } | Sort-Object)
@@ -188,7 +190,7 @@ try {
         Assert (-not $missing -and -not $extra) "missing: $($missing -join ', ') | unexpected: $($extra -join ', ')"
     }
     Test 'Metric checks: candidates that are in use are dropped, not reported' {
-        foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data') {
+        foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress') {
             Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is in use but was reported"
         }
     }
@@ -244,15 +246,22 @@ try {
         Assert-Equal 'low' (Get-Row $base 'lb-empty-scratch').confidence 'rule-less load balancer'
         Assert-Equal 'medium' (Get-Row $base 'ca-queue-worker').confidence 'Container App without HTTP ingress'
         Assert-Equal 'high' (Get-Row $base 'vm-retired-app_OsDisk').confidence 'premium disk on a VM off 90+ days'
+        Assert-Equal 'low' (Get-Row $base 'rsv-dev/vm-old01').confidence 'backup of a deleted VM (may be the only copy)'
+        Assert ((Get-Row $base 'rsv-dev/vm-old01').suggestedAction -match 'Do NOT delete') 'backup of a deleted VM: action must say do not delete'
+        Assert-Equal 'high' (Get-Row $base 'fw-hub-legacy').confidence 'firewall with no traffic'
+        Assert-Equal 'medium' (Get-Row $base 'fw-dev-dnat').confidence 'firewall with some traffic but no rule hits'
     }
     Test 'Costs: deterministic offline prices and billed costs' {
         $cases = [ordered]@{ 'vm-win-jumpbox' = '97.53'; 'nat-dev-unused' = '32.85'; 'sql-legacy/reporting-old' = '147.17'; 'lb-old-web' = '18.25'
                              'vm-build-agent-02' = '276.48'; 'oai-research/gpt-ptu-eval' = '10950'; 'ca-orders-legacy' = '46.66'; 'crlegacybuild' = '100'
-                             'disk-sql-data-old' = '135.18'; 'asp-legacy-api' = '248.2' }
+                             'disk-sql-data-old' = '135.18'; 'asp-legacy-api' = '248.2'
+                             'ddos-legacy-plan' = '2943.55'; 'asp-intranet-old' = '219'; 'asp-free-stopped' = '0'; 'fw-hub-legacy' = '1277.5'; 'fw-dev-dnat' = '912.5' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
         Assert ((Get-Row $base 'vm-build-agent-02').costSource -like 'billed*') 'vm-build-agent-02 should use billed cost'
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'
         Assert-Equal '' (Get-Row $base 'log-security-archive').monthlyCost 'Log Analytics cost (must be unknown, not 0)'
+        Assert-Equal '' (Get-Row $base 'rsv-dev/vm-old01').monthlyCost 'backup cost (must be unknown, not 0)'
+        Assert-Equal 'True' (Get-Row $base 'asp-intranet-old').commitmentCaveat 'stopped-app plan cost can be covered by a commitment'
     }
     Test 'Advisor: a recommendation for an already-found resource is merged, not listed twice' {
         Assert (-not ($base.Rows | Where-Object { $_.wasteType -eq 'advisor-cost' -and $_.name -eq 'asp-legacy-api' })) 'asp-legacy-api appears twice'
@@ -302,7 +311,7 @@ try {
     Test 'SkipMetrics: metric-confirmed types are left out, with a warning' {
         $r = Invoke-Run $Fixtures 'skipmetrics' @('-SkipMetrics')
         $cand = 'idle-container-app', 'log-analytics-workspace', 'idle-storage-account', 'hot-blob-unread', 'idle-container-registry', 'oversized-container-registry',
-                'idle-openai-deployment', 'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm'
+                'idle-openai-deployment', 'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm', 'idle-firewall'
         Assert (-not ($r.Rows | Where-Object { $_.wasteType -in $cand })) 'candidate types must be absent'
         Assert ($r.Report -match 'not checked because of -SkipMetrics') 'missing -SkipMetrics warning'
     }

@@ -426,7 +426,7 @@ function Format-Bytes([double] $b) {
 # Metric-confirmed waste types (queries 08-12). Their query rows are candidates: Confirm-Candidate
 # turns each into 0..n findings, or drops it when the metrics show it's in use.
 $CandidateTypes = @('idle-container-app', 'log-analytics-workspace', 'idle-storage-account', 'idle-container-registry', 'idle-openai-deployment',
-                    'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm')
+                    'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm', 'idle-firewall')
 $MinAgeDays = 30   # need 30 days of history before calling anything idle
 
 function New-FindingFrom($row, [hashtable] $Set) {
@@ -570,6 +570,18 @@ function Confirm-Candidate($r) {
             $why = "0 successful connections in 30 days ($($r.sku), $size), but compute bills every hour"
             return @(New-FindingFrom $r @{ confidence = 'high'; reason = $why; idleDays = 30; idleSource = 'connection_successful metric, 30 days'
                                            vcores = [int] ($ci.vcores ?? 0); sqlTier = [string] $ci.tier })
+        }
+        'idle-firewall' {
+            # Hourly grain: these metrics are published per minute, and 30 days of hours is 720 points
+            $m = Get-MetricStats $r.id @('DataProcessed', 'ApplicationRuleHit', 'NetworkRuleHit') 'Total' 'PT1H'
+            $bytes = Get-StatSum $m 'DataProcessed'; $hits = (Get-StatSum $m 'ApplicationRuleHit') + (Get-StatSum $m 'NetworkRuleHit')
+            if ($hits -gt 0 -or $bytes -ge 1GB) { return @() }
+            $conf = ($bytes -lt 100MB) ? 'high' : 'medium'
+            $where = [bool] $ci.hub ? ' in a virtual hub' : ''
+            $why = "0 application or network rule hits and $(Format-Bytes $bytes) processed in 30 days ($($ci.tier)$where), but the deployment fee bills every hour"
+            if ($conf -eq 'medium') { $why += '. Some traffic still flows (DNAT rules have no hit metric), so check what routes through it first' }
+            return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = 30; idleSource = 'DataProcessed and rule hit metrics, 30 days'
+                                           hub = [bool] $ci.hub })
         }
         'premium-disk-deallocated-vm' {
             $vmId = [string] $ci.vmId
@@ -884,6 +896,10 @@ $TypeInfo = [ordered]@{
     'idle-sql-database'          = 'Idle SQL databases'
     'premium-disk-deallocated-vm' = 'Premium disks on long-deallocated VMs'
     'empty-resource-group'       = 'Empty resource groups'
+    'idle-ddos-protection-plan'  = 'DDoS protection plans protecting nothing'
+    'stopped-app-service-plan'   = 'App Service plans whose apps are all stopped'
+    'orphaned-vm-backup'         = 'Backups of deleted VMs'
+    'idle-firewall'              = 'Idle Azure Firewalls'
     'advisor-cost'               = 'Other Azure Advisor cost recommendations'
 }
 $ConfRank = @{ high = 0; medium = 1; low = 2 }
@@ -948,7 +964,7 @@ function Get-LivePrice($f) {
                 Where-Object { $_.meterName -eq "$ipSku IPv4 Static Public IP" -and $_.unitOfMeasure -eq '1 Hour' } | Select-Object -First 1
             if ($it) { return @{ Cost = [double] $it.retailPrice * $hours; Note = "$ipSku static IP list price, $region" } }
         }
-        'empty-app-service-plan' {
+        { $_ -in 'empty-app-service-plan', 'stopped-app-service-plan' } {
             if ($sku -in $Pricing.appServicePlans.free -or $f.tier -in $Pricing.appServicePlans.free) { return $null }   # free; Get-Estimate says so
             if ($sku -like 'EP*' -or $sku -like 'WS*') { return $null }   # Elastic Premium / Workflow: vCPU+memory meters
             # The API spells some SKUs with a space ('P1 v3', 'I1 v2') and others without ('P0v3', 'P1mv3')
@@ -1056,6 +1072,17 @@ function Get-LivePrice($f) {
             $extra = ($sku -ne 'Basic') ? (Get-MeterPrice $bf { $_.meterName -eq "$sku Additional Gateway" -and $_.unitOfMeasure -eq '1 Hour' }) : 0
             if ($null -ne $base) { return @{ Cost = ($base + [math]::Max(0, [int] $f.scaleUnits - 2) * ($extra ?? 0)) * $hours; Note = "$sku Bastion list price, $($f.scaleUnits) scale unit(s), $region" } }
         }
+        'idle-ddos-protection-plan' {
+            $p = Get-MeterPrice "serviceName eq 'Azure DDOS Protection' and armRegionName eq '$rg' and skuName eq 'Network Protection'" { $_.meterName -eq 'Network Protection Plan' -and $_.unitOfMeasure -eq '1 Hour' }
+            if ($null -ne $p) { return @{ Cost = $p * $hours; Note = "Network Protection plan list price, $region" } }
+        }
+        'idle-firewall' {
+            # Hub firewalls have their own meters ('Standard Secure Virtual Hub', 'Premium Secured Virtual Hub')
+            $meterSku = $f.hub ? (@{ Basic = 'Basic Secured Virtual Hub'; Standard = 'Standard Secure Virtual Hub'; Premium = 'Premium Secured Virtual Hub' }[$sku]) : $sku
+            if (-not $meterSku) { return $null }
+            $p = Get-MeterPrice "serviceName eq 'Azure Firewall' and armRegionName eq '$rg' and skuName eq '$(Get-ODataLiteral $meterSku)'" { $_.meterName -eq "$meterSku Deployment" -and $_.unitOfMeasure -eq '1 Hour' }
+            if ($null -ne $p) { return @{ Cost = $p * $hours; Note = "$meterSku deployment list price, $region; capacity units and data processed extra" } }
+        }
         'premium-disk-deallocated-vm' {
             $tier = Get-DiskTier $f
             if (-not $tier) { return $null }
@@ -1120,7 +1147,7 @@ function Get-Estimate($f) {
             if ($f.confidence -eq 'low') { return @{ Cost = 0.0; Note = 'no charge' } }
             return @{ Cost = $Pricing.publicIps['Basic|Static']; Note = 'list price' }
         }
-        'empty-app-service-plan' {
+        { $_ -in 'empty-app-service-plan', 'stopped-app-service-plan' } {
             if ($sku -in $Pricing.appServicePlans.free -or $f.tier -in $Pricing.appServicePlans.free) { return @{ Cost = 0.0; Note = 'free tier' } }
             $tbl = $Pricing.appServicePlans[[string] $f.os]
             $price = $tbl ? $tbl[$sku] : $null
@@ -1218,6 +1245,13 @@ function Get-Estimate($f) {
             return @{ Cost = ($tier.Price - $e.prices[$tier.Index]) * $mult; Note = "$($tier.Name) minus $($e.tiers[$tier.Index]) list price" }
         }
         'empty-resource-group' { return @{ Cost = 0.0; Note = 'resource groups are free' } }
+        'idle-ddos-protection-plan' { return @{ Cost = $Pricing.network.ddosPlanPerHour * $Pricing.hoursPerMonth; Note = 'Network Protection plan list price' } }
+        'idle-firewall' {
+            $rate = $Pricing.network.firewallPerHour[$sku]
+            if ($null -eq $rate) { return @{ Cost = $null; Note = "no list price for $sku" } }
+            return @{ Cost = $rate * $Pricing.hoursPerMonth; Note = "$sku deployment list price; capacity units and data processed extra" }
+        }
+        'orphaned-vm-backup' { return @{ Cost = $null; Note = "backup storage of retained recovery points (and the protected-instance fee while protected); see the vault's Backup items and Cost analysis" } }
     }
     return @{ Cost = $null; Note = '' }
 }
@@ -1299,6 +1333,19 @@ function Get-Action($f) {
         'empty-resource-group' { return @(
             'Delete it if nothing is about to be deployed there. Check for locks and role assignments others may rely on first.',
             "az group delete --name $($f.name) --subscription $($f.subscriptionId)") }
+        'idle-ddos-protection-plan' { return @(
+            "Confirm with $who that no virtual network is about to be linked, then delete the plan. Free DDoS infrastructure protection stays on. If only a few public IPs need DDoS protection, IP Protection per IP is usually cheaper.",
+            "az network ddos-protection delete --ids $id") }
+        'stopped-app-service-plan' {
+            if ($f.confidence -eq 'low') { return @('No charge on this tier. Delete the stopped apps and the plan to reduce clutter.', "az appservice plan delete --ids $id") }
+            return @("Confirm with $who whether the stopped apps will run again. If they're retired, delete them and then the plan. If they're parked, scale the plan down to B1 or Free while they're stopped (stopping an app doesn't reduce the bill).",
+                     "az appservice plan update --ids $id --sku B1") }
+        'orphaned-vm-backup' { return @(
+            "Do NOT delete before confirming with ${who}: this may be the only copy of the deleted VM's data, kept on purpose. Check retention, legal hold or compliance requirements first. If it's not needed, stop protection and delete the backup data (soft delete keeps it recoverable for 14 more days).",
+            "az backup protection disable --ids $id --delete-backup-data true --yes") }
+        'idle-firewall' { return @(
+            ('Check route tables (forced tunneling, hub routing) and any planned spokes that send traffic through it. If it is not needed, delete it, or deallocate it to keep its configuration without the hourly fee (Azure PowerShell: $fw.Deallocate(); Set-AzFirewall $fw).'),
+            "az network firewall delete --ids $id") }
         'advisor-cost' { return @("Advisor suggests: $($f.extra). Review it on the Advisor Cost tab.", '') }
     }
 }
@@ -1310,7 +1357,7 @@ function Format-Day($v) { if (-not $v) { return '' }; try { [DateTimeOffset]::Pa
 $PartialSavingTypes = @('premium-disk-deallocated-vm', 'hot-blob-unread', 'oversized-container-registry')
 
 # Waste types whose cost a reservation or savings plan can cover
-$CommitmentEligible = @('vm-stopped-not-deallocated', 'idle-openai-deployment', 'idle-sql-database', 'empty-app-service-plan',
+$CommitmentEligible = @('vm-stopped-not-deallocated', 'idle-openai-deployment', 'idle-sql-database', 'empty-app-service-plan', 'stopped-app-service-plan',
                         'unattached-disk', 'premium-disk-deallocated-vm')
 
 # Sovereign clouds have their own portals
