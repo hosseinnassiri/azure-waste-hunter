@@ -111,7 +111,7 @@ Everything in sections 1-5 is done or decided against. The open items:
 | ~~★★~~ | ~~Memory check for oversized VMs (type 37)~~ — **done** 2026-11-27 | `Available Memory Percentage` read in the same call as CPU: over 50% used at the busiest hour is dropped (half the size wouldn't fit), 40% or less is high confidence, no data stays medium. Disk throughput, which also halves, is still not checked |
 | ~~★★~~ | ~~Azure Managed Redis (`microsoft.cache/redisenterprise`)~~ — **done** 2026-11-27 | type 26 now covers both. Managed Redis is priced per instance (2 with high availability, per the docs); legacy Enterprise and Enterprise Flash are priced as list price x capacity units, which is an **assumption to check** against a real bill. The docs warn that internal processes can show as connected clients, so a strict "0 clients" can miss idle caches (it never flags a busy one) |
 | ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |
-| ★ | Power BI Embedded (A SKUs) capacities left running | same pattern as Fabric (type 25) |
+| ~~★~~ | ~~Power BI Embedded (A SKUs) capacities left running~~ — **done** 2026-11-27 | type 25 platform `powerbi`: Gen2 `cpu_metric` under 1% in the busiest hour (high at 0%), no CPU data (Gen1, or no activity) low |
 | ★ | Full snapshots that could be incremental | storage saving |
 | ★ | Uniform scale set instances stopped but not deallocated | check whether `computeresources` exposes their power state |
 | ★ | Service Bus Standard, IPv6 prefixes, classic Front Door | skipped by types 27, 31 and 32 (small or differently billed) |

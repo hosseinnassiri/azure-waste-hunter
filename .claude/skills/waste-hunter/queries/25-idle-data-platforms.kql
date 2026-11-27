@@ -1,14 +1,16 @@
 // waste-hunter 25 · Data platforms left running (CANDIDATES, confirmed by metrics)
-// Fabric capacities, Synapse dedicated SQL pools and Data Explorer clusters bill every hour they run,
-// used or not, and all three can be paused or stopped. Only running ones are returned (Fabric Active,
-// Synapse Online, Data Explorer Running). The runner checks 30 days of connections or queries; Fabric
-// has no usage metric in Azure Monitor, so a Fabric capacity is reported at low confidence to check.
+// Fabric capacities, Power BI Embedded capacities, Synapse dedicated SQL pools and Data Explorer
+// clusters bill every hour they run, used or not, and all of them can be paused or stopped. Only running
+// ones are returned (Fabric Active, Power BI Embedded Succeeded, Synapse Online, Data Explorer Running).
+// The runner checks 30 days of connections, queries or CPU; Fabric has no usage metric in Azure Monitor,
+// so a Fabric capacity is reported at low confidence to check.
 // READ-ONLY. Run:  az graph query -q @25-idle-data-platforms.kql --first 1000
 resources
-| where type in~ ('microsoft.fabric/capacities', 'microsoft.synapse/workspaces/sqlpools', 'microsoft.kusto/clusters')
+| where type in~ ('microsoft.fabric/capacities', 'microsoft.powerbidedicated/capacities', 'microsoft.synapse/workspaces/sqlpools', 'microsoft.kusto/clusters')
 | extend state = tostring(coalesce(properties.state, properties.status))
-| extend platform = case(type =~ 'microsoft.fabric/capacities', 'fabric', type =~ 'microsoft.kusto/clusters', 'kusto', 'synapse')
-| where (platform == 'fabric' and state =~ 'Active') or (platform == 'synapse' and state =~ 'Online') or (platform == 'kusto' and state =~ 'Running')
+| extend platform = case(type =~ 'microsoft.fabric/capacities', 'fabric', type =~ 'microsoft.powerbidedicated/capacities', 'powerbi', type =~ 'microsoft.kusto/clusters', 'kusto', 'synapse')
+| where (platform == 'fabric' and state =~ 'Active') or (platform == 'powerbi' and state =~ 'Succeeded')
+     or (platform == 'synapse' and state =~ 'Online') or (platform == 'kusto' and state =~ 'Running')
 | extend createdTime = todatetime(properties.creationDate)
 | extend ageDays = toint((now() - createdTime) / 1d)
 | extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),

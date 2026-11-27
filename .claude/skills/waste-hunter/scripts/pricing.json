@@ -98,7 +98,8 @@
     "_about": "Fabric: per capacity unit (F64 = 64 CU) per hour. Synapse dedicated SQL pool: per 100 DWU per hour. Data Explorer: markup per vCPU-hour on top of the VM price.",
     "fabricPerCuHour": 0.18,
     "synapsePer100DwuHour": 1.51,
-    "dataExplorerMarkupPerVcpuHour": 0.11
+    "dataExplorerMarkupPerVcpuHour": 0.11,
+    "powerBiEmbeddedPerHour": { "A1": 1.0081, "A2": 2.0081, "A3": 4.0242, "A4": 8.0565, "A5": 16.121, "A6": 32.2506 }
   },
 
   "redisCache": {

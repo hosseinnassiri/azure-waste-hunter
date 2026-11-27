@@ -1,67 +1,67 @@
 {
   "rg-ml/oai-research": [
     {
-      "properties": {
-        "model": {
-          "name": "gpt-4o",
-          "format": "OpenAI"
-        }
+      "systemData": {
+        "createdAt": "2026-07-30T12:48:18.7674109Z"
       },
       "name": "gpt-ptu-eval",
       "sku": {
-        "name": "GlobalProvisionedManaged",
-        "capacity": 15
+        "capacity": 15,
+        "name": "GlobalProvisionedManaged"
       },
-      "systemData": {
-        "createdAt": "2026-07-30T12:38:03.7599026Z"
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4o"
+        }
       }
     },
     {
-      "properties": {
-        "model": {
-          "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c",
-          "format": "OpenAI"
-        }
+      "systemData": {
+        "createdAt": "2026-08-29T12:48:18.7674109Z"
       },
       "name": "gpt-4o-mini-support-ft",
       "sku": {
-        "name": "Standard",
-        "capacity": 1
+        "capacity": 1,
+        "name": "Standard"
       },
-      "systemData": {
-        "createdAt": "2026-08-29T12:38:03.7599026Z"
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c"
+        }
       }
     },
     {
-      "properties": {
-        "model": {
-          "name": "gpt-4o",
-          "format": "OpenAI"
-        }
+      "systemData": {
+        "createdAt": "2026-05-11T12:48:18.7674109Z"
       },
       "name": "gpt-4o-chat",
       "sku": {
-        "name": "GlobalStandard",
-        "capacity": 50
+        "capacity": 50,
+        "name": "GlobalStandard"
       },
-      "systemData": {
-        "createdAt": "2026-05-11T12:38:03.7599026Z"
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4o"
+        }
       }
     },
     {
-      "properties": {
-        "model": {
-          "name": "gpt-4o",
-          "format": "OpenAI"
-        }
+      "systemData": {
+        "createdAt": "2026-01-31T12:48:18.7674109Z"
       },
       "name": "gpt-ptu-prod",
       "sku": {
-        "name": "ProvisionedManaged",
-        "capacity": 100
+        "capacity": 100,
+        "name": "ProvisionedManaged"
       },
-      "systemData": {
-        "createdAt": "2026-01-31T12:38:03.7599026Z"
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4o"
+        }
       }
     }
   ]

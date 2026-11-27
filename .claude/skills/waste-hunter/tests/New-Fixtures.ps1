@@ -327,7 +327,15 @@ $synIdle = SynPool 'dw-legacy' @{ owner = 'data-team@example.com'; env = 'prod' 
 $synBusy = SynPool 'dw-prod' @{}
 $adx     = Cand 'idle-data-platform' $D 'rg-telemetry' 'Microsoft.Kusto/clusters' 'adx-telemetry' 'eastus' @{ env = 'dev'; sku = 'Standard_E8ads_v5'; tier = 'kusto'; sizeGb = 2; extra = 'Running' } ([ordered]@{ platform = 'kusto'; instances = 2 })
 $adxBusy = Cand 'idle-data-platform' $P 'rg-telemetry' 'Microsoft.Kusto/clusters' 'adx-busy' 'eastus' @{ sku = 'Standard_E8ads_v5'; tier = 'kusto'; sizeGb = 2; extra = 'Running' } ([ordered]@{ platform = 'kusto'; instances = 2 })
-Save '25-idle-data-platforms.json' @($fab, $synIdle, $synBusy, $adx, $adxBusy)
+# Power BI Embedded: pbi-reports idle (0% CPU), pbi-portal busy (dropped), pbi-legacy no CPU data (Gen1: low)
+$pbiT = 'Microsoft.PowerBIDedicated/capacities'
+function Pbi($name, $sku, [hashtable] $x = @{}) { Cand 'idle-data-platform' $P 'rg-bi' $pbiT $name 'eastus' (@{ sku = $sku; tier = 'powerbi'; extra = 'Succeeded' } + $x) ([ordered]@{ platform = 'powerbi'; instances = $null }) }
+$pbiIdle = Pbi 'pbi-reports' 'A2' @{ owner = 'bi-team@example.com'; env = 'prod' }
+$pbiBusy = Pbi 'pbi-portal' 'A1'
+$pbiOld  = Pbi 'pbi-legacy' 'A1'
+Save '25-idle-data-platforms.json' @($fab, $synIdle, $synBusy, $adx, $adxBusy, $pbiIdle, $pbiBusy, $pbiOld)
+$metrics["$($pbiIdle.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(Ts @() 'average' (Hours 480 0 0)) })
+$metrics["$($pbiBusy.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(Ts @() 'average' (Hours 480 5 40)) })
 $metrics["$($synIdle.id.ToLower())|connections"] = Set-Metrics $synIdle.id ([ordered]@{ Connections = 0; ActiveQueries = 0 })
 $metrics["$($synBusy.id.ToLower())|connections"] = Set-Metrics $synBusy.id ([ordered]@{ Connections = 300; ActiveQueries = 1200 })
 Set-Metric $adx.id 'IngestionVolumeInMB' 'total' @(@{ value = 5000 })       # ingests, never queried: medium
