@@ -55,7 +55,8 @@ function Get-MetricStats([string] $Id, [string[]] $Metrics, [string] $Aggregatio
 
 # Actual cost per resource over the last 30 days, keyed by lower-case resource ID.
 function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
-    $usage = Invoke-AzRead @('consumption', 'usage', 'list', '--subscription', $SubscriptionId,
+    # --include-additional-properties: reserved-instance usage names its reservation order there
+    $usage = Invoke-AzRead @('consumption', 'usage', 'list', '--subscription', $SubscriptionId, '--include-additional-properties',
         '--start-date', $Now.AddDays(-30).ToString('yyyy-MM-dd'), '--end-date', $Now.ToString('yyyy-MM-dd'))
     $n = 0; $total = 0
     foreach ($o in @(Get-ReservationOrderIds $usage)) { [void] $ReservationOrders.Add($o) }
@@ -80,12 +81,16 @@ function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
     return $n
 }
 
-# Reservation order IDs named in usage records (reserved-instance usage carries ReservationOrderId in
-# additionalInfo, or a reservationId path). Only the IDs are kept, so their utilization can be read.
+# Reservation order IDs named in usage records: reserved-instance usage carries ReservationOrderId in
+# additionalProperties (a JSON string in the legacy schema; an object is handled too). Only the IDs
+# are kept, so their utilization can be read. The newer schema (MCA, some Visual Studio offers) has
+# no such field, so nothing is found there.
 function Get-ReservationOrderIds($usage) {
     $ids = foreach ($u in @($usage)) {
-        foreach ($k in 'additionalInfo', 'reservationId', 'additionalProperties') {
-            $v = [string] (Get-Key $u $k)
+        foreach ($k in 'additionalProperties', 'reservationId') {
+            $raw = Get-Key $u $k
+            if ($null -eq $raw) { continue }
+            $v = ($raw -is [string]) ? $raw : (ConvertTo-Json $raw -Depth 5 -Compress)
             if (-not $v) { continue }
             foreach ($m in [regex]::Matches($v, '(?i)"?ReservationOrderId"?\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})|reservationorders/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})')) {
                 ($m.Groups[1].Value ? $m.Groups[1].Value : $m.Groups[2].Value).ToLower()

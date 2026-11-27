@@ -165,7 +165,7 @@ try {
             'az graph query -q @C:/repo/.claude/skills/waste-hunter/queries/01-unattached-disks.kql --first 5 --query count -o tsv'
             'az monitor metrics list --resource /subscriptions/0000/resourceGroups/rg-backup-restore/providers/Microsoft.Compute/virtualMachines/vm-setup --metric "Percentage CPU" --interval P1D --aggregation Maximum'
             'az advisor recommendation list --category Cost'
-            'az consumption usage list --subscription 0000 --start-date 2026-10-27 --end-date 2026-11-26'
+            'az consumption usage list --subscription 0000 --include-additional-properties --start-date 2026-10-27 --end-date 2026-11-26'
             'az consumption reservation summary list --grain daily --reservation-order-id 0000 --start-date 2026-10-27 --end-date 2026-11-26'
             'az cognitiveservices account deployment list -g rg-ml -n oai-research --subscription 0000'
             'az account show', 'az account list --all', 'az account set --subscription 0000-1111'

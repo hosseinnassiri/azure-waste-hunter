@@ -30,15 +30,16 @@
                 $util = $used / $reserved * 100
                 if ($util -ge 80) { continue }
                 $first = $g.Group[0]
-                $sku = [string] (Get-Key $first 'skuName'); $kind = [string] (Get-Key $first 'kind')
-                $qty = (Get-Key $first 'totalReservedQuantity') ?? (Get-Key $first 'purchasedQuantity')
+                # The summary has no kind or quantity: reservationId, reservationOrderId, skuName, usageDate,
+                # reservedHours, usedHours and min/avg/max utilization (checked against the CLI's schema)
+                $sku = [string] (Get-Key $first 'skuName')
                 $rid = $g.Name
                 $rows += [ordered]@{
                     wasteType = 'underused-reservation'; id = "/providers/Microsoft.Capacity/reservationOrders/$o/reservations/$rid"
                     name = "$($sku ? $sku : 'reservation') ($($rid.Substring(0, [math]::Min(8, $rid.Length))))"; type = 'microsoft.capacity/reservationorders/reservations'
                     tenantId = [string] $original.tenantId; subscriptionId = ''; resourceGroup = ''; location = ''; owner = ''; app = ''; env = ''
                     createdTime = ''; ageDays = $null; idleDays = $null; idleSource = 'reservation summary (reserved vs used hours), 30 days'
-                    sku = $sku; tier = $kind; sizeGb = $qty; os = ''; extra = $o
+                    sku = $sku; tier = ''; sizeGb = $null; os = ''; extra = $o
                     confidence = ($util -lt 50) ? 'high' : 'medium'
                     reason = ('Used {0:N0}% of its reserved hours in the last 30 days ({1:N0} of {2:N0} hours). The unused hours are prepaid and lost' -f $util, $used, $reserved)
                     ignored = 0; utilization = $util

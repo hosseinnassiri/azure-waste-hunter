@@ -399,15 +399,15 @@ Save '37-underused-vms.json' @($vmOver, $vmBusy, $vmSmall)
 $metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 3.5)) })
 $metrics["$($vmBusy.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 20 60)) })
 
-# Reservations: one order, found through a usage record's additionalInfo. r1 used 30% of its hours
+# Reservations: one order, found through a usage record's additionalProperties. Fields as in the CLI's schema. r1 used 30% of its hours
 # (flagged, high); r2 used 96% (dropped).
 $resOrder = 'aaaaaaaa-1111-2222-3333-444444444444'
 $resIds = 'bbbbbbbb-1111-2222-3333-444444444444', 'cccccccc-1111-2222-3333-444444444444'
 $resDays = foreach ($i in 1..30) {
-    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[0])"; skuName = 'Standard_D4s_v5'; kind = 'Reservation'
-       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 96; usedHours = 28.8; totalReservedQuantity = 4 }
-    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[1])"; skuName = 'Standard_E8s_v5'; kind = 'Reservation'
-       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 24; usedHours = 23; totalReservedQuantity = 1 }
+    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[0])"; skuName = 'Standard_D4s_v5'
+       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 96; usedHours = 28.8; avgUtilizationPercentage = 30 }
+    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[1])"; skuName = 'Standard_E8s_v5'
+       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 24; usedHours = 23; avgUtilizationPercentage = 95.83 }
 }
 @{ $resOrder = @($resDays) } | ConvertTo-Json -Depth 6 -Compress | Set-Content (Join-Path $Out 'reservations.json') -Encoding utf8
 
@@ -431,8 +431,8 @@ $usage = foreach ($i in 1..30) {
     @{ instanceId = $vmBuild; pretaxCost = 9.216; currency = 'USD'; usageStart = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') }
     @{ instanceId = (Rid $P 'rg-sql-prod' $disk 'disk-sql-data-old'); pretaxCost = 4.506; currency = 'USD'; usageStart = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') }
 }
-# Reserved-instance usage names its reservation order in additionalInfo: that's how the scan finds orders
+# Reserved-instance usage names its reservation order in additionalProperties (a JSON string): that's how the scan finds orders
 $usage = @($usage) + @{ instanceId = $vmBuild; pretaxCost = 0; currency = 'USD'; usageStart = $now.AddDays(-1).ToString('yyyy-MM-ddT00:00:00Z')
-                        additionalInfo = "{""ReservationOrderId"":""$resOrder"",""ReservationId"":""$($resIds[0])"",""ConsumedQuantity"":24}" }
+                        additionalProperties = "{""ReservationOrderId"":""$resOrder"",""ReservationId"":""$($resIds[0])"",""ConsumedQuantity"":24}" }
 Save 'consumption.json' @($usage)
 Write-Host "fixtures written to $Out"
