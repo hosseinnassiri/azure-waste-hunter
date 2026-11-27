@@ -1,0 +1,43 @@
+// waste-hunter 40 · Zone-redundant SQL databases and elastic pools in non-production
+// On the General Purpose tier, zone redundancy is an add-on billed per vCore-hour on top of compute (the
+// "Zone Redundancy vCore" meter). Premium and Business Critical get it at no extra cost, and Hyperscale
+// can't change it after creation, so those are skipped. A database or pool tagged as non-production
+// (env/environment = dev, test, qa, sandbox, poc, demo, lab or nonprod, on it or on its server) rarely
+// needs to survive a zone outage. Databases in an elastic pool are skipped: the pool's setting is the one
+// billed. Serverless databases pay the add-on only for the vCores they use, so their saving can't be
+// known from inventory (low confidence, no cost).
+// READ-ONLY. Run:  az graph query -q @40-nonprod-zone-redundant-sql.kql --first 1000
+resources
+| where type in~ ('microsoft.sql/servers/databases', 'microsoft.sql/servers/elasticpools')
+| where name !~ 'master'
+| where tobool(properties.zoneRedundant)
+| where tostring(sku.tier) =~ 'GeneralPurpose'
+| where type =~ 'microsoft.sql/servers/elasticpools' or isempty(tostring(properties.elasticPoolId))
+| extend serverId = tolower(extract(@'(?i)^(.*/servers/[^/]+)/', 1, id))
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.sql/servers'
+    | project serverId = tolower(id),
+              srvOwner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+              srvApp   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+              srvEnv   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+              srvIgnored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+  ) on serverId
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy']), srvOwner),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application']), srvApp),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment']), srvEnv),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"' or coalesce(srvIgnored, false)
+| where env in~ ('dev', 'development', 'test', 'testing', 'qa', 'sandbox', 'poc', 'demo', 'lab', 'nonprod', 'non-prod', 'non-production')
+| extend skuName = tostring(sku.name), vcores = toint(sku.capacity),
+         isPool = type =~ 'microsoft.sql/servers/elasticpools'
+| extend serverless = not(isPool) and skuName contains '_S_'
+| extend what = iff(isPool, 'elastic pool', 'database')
+| extend createdTime = todatetime(properties.creationDate)
+| project wasteType = 'nonprod-zone-redundant-sql', id, name = strcat(tostring(split(id, '/')[8]), '/', name), type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays = toint((now() - createdTime) / 1d), idleDays = int(null), idleSource = 'not applicable (in use)',
+          sku = skuName, tier = iff(serverless, 'serverless', 'provisioned'), sizeGb = vcores, os = '', extra = what,
+          confidence = iff(serverless, 'low', 'medium'),
+          reason = strcat('Tagged env=', env, ' but zone-redundant on General Purpose (', what, ', ', tostring(vcores), ' vCores',
+                          iff(serverless, ', serverless: the add-on bills only for the vCores used', ''),
+                          '). That adds a per-vCore zone-redundancy charge on top of compute; a non-production ', what, ' rarely needs to survive a zone outage'),
+          ignored

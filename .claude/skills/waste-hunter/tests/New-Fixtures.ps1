@@ -306,6 +306,21 @@ Save '38-full-snapshots.json' @(
         createdTime = (Ago 40); ageDays = 40; idleSource = 'timeCreated'; sku = 'Standard_LRS'; tier = 'series'; sizeGb = 256; extra = (Rid $D 'rg-build' $disk 'disk-build-cache').ToLower()
         confidence = 'low'; reason = 'One of 4 full snapshots of the same disk in 90 days. As incremental snapshots, all but the newest would store only what changed' }))
 
+# Zone-redundant General Purpose SQL in non-production (rows as query 40 returns them; Premium/Business
+# Critical, databases in a pool and production ones are filtered in KQL)
+$sqlT = 'microsoft.sql/servers/databases'; $poolT = 'microsoft.sql/servers/elasticpools'
+$zrWhy = { param($what, $n, $extra) "Tagged env=dev but zone-redundant on General Purpose ($what, $n vCores$extra). That adds a per-vCore zone-redundancy charge on top of compute; a non-production $what rarely needs to survive a zone outage" }
+Save '40-nonprod-zone-redundant-sql.json' @(
+    (Row 'nonprod-zone-redundant-sql' $D 'rg-sandbox' 'x' 'x' 'eastus' @{ id = (Rid $D 'rg-sandbox' 'Microsoft.Sql/servers' 'sql-dev-01/databases/appdb'); name = 'sql-dev-01/appdb'; type = $sqlT
+        owner = 'sandbox@example.com'; env = 'dev'; createdTime = (Ago 200); ageDays = 200; idleSource = 'not applicable (in use)'; sku = 'GP_Gen5_4'; tier = 'provisioned'; sizeGb = 4; extra = 'database'
+        confidence = 'medium'; reason = (& $zrWhy 'database' 4 '') }),
+    (Row 'nonprod-zone-redundant-sql' $D 'rg-sandbox' 'x' 'x' 'eastus' @{ id = (Rid $D 'rg-sandbox' 'Microsoft.Sql/servers' 'sql-dev-01/elasticPools/pool-test'); name = 'sql-dev-01/pool-test'; type = $poolT
+        env = 'dev'; createdTime = (Ago 150); ageDays = 150; idleSource = 'not applicable (in use)'; sku = 'GP_Gen5'; tier = 'provisioned'; sizeGb = 2; extra = 'elastic pool'
+        confidence = 'medium'; reason = (& $zrWhy 'elastic pool' 2 '') }),
+    (Row 'nonprod-zone-redundant-sql' $D 'rg-sandbox' 'x' 'x' 'eastus' @{ id = (Rid $D 'rg-sandbox' 'Microsoft.Sql/servers' 'sql-dev-01/databases/reports-sl'); name = 'sql-dev-01/reports-sl'; type = $sqlT
+        env = 'dev'; createdTime = (Ago 90); ageDays = 90; idleSource = 'not applicable (in use)'; sku = 'GP_S_Gen5_2'; tier = 'serverless'; sizeGb = 2; extra = 'database'
+        confidence = 'low'; reason = (& $zrWhy 'database' 2 ', serverless: the add-on bills only for the vCores used') }))
+
 # ---- Phase 5: Cosmos DB, data platforms, Redis, messaging, API Management, ML clusters, private
 # endpoints, IP prefixes, edge profiles, non-prod VMs, reservations, Hybrid Benefit, geo-redundant
 # non-prod storage, oversized VMs. Each candidate type has cases it must flag and cases it must drop.
@@ -316,7 +331,13 @@ function Ts([object[]] $dims, [string] $agg, [double[]] $values) {
     @{ metadatavalues = $mv; data = @(for ($i = 0; $i -lt $values.Count; $i++) { @{ timeStamp = $start.AddHours($i).ToString('yyyy-MM-ddTHH:00:00Z'); $agg = $values[$i] } }) }
 }
 function MetricResp([System.Collections.IDictionary] $byMetric) { @{ value = @(foreach ($k in $byMetric.Keys) { @{ name = @{ value = $k }; timeseries = @($byMetric[$k]) } }) } }
-function Hours([int] $n, [double] $lo, [double] $hi) { @(for ($i = 0; $i -lt $n; $i++) { $lo + ($hi - $lo) * (($i * 7) % 20) / 19 }) }
+# An hourly series of $n points ending now, cycling between $lo and $hi. Written as that description, not
+# 480+ literal points (which made metrics.json ~430 KB); fixture mode expands it when it loads the file
+# (Expand-FixtureSeries in scripts/lib/AzRead.ps1, which holds the formula).
+function TsHours([object[]] $dims, [string] $agg, [int] $n, [double] $lo, [double] $hi) {
+    $mv = @(for ($i = 0; $i -lt $dims.Count; $i += 2) { @{ name = @{ value = $dims[$i] }; value = $dims[$i + 1] } })
+    @{ metadatavalues = $mv; hourly = @{ agg = $agg; count = $n; lo = $lo; hi = $hi; end = $now.ToString('o') } }
+}
 function Cand($wt, $sub, $rg, $prov, $name, $loc, [hashtable] $x, [System.Collections.IDictionary] $ci) {
     $h = @{ confidence = 'pending'; idleSource = 'pending (metrics)' }; foreach ($k in $x.Keys) { $h[$k] = $x[$k] }
     $r = Row $wt $sub $rg $prov $name $loc $h
@@ -356,8 +377,8 @@ $pbiIdle = Pbi 'pbi-reports' 'A2' @{ owner = 'bi-team@example.com'; env = 'prod'
 $pbiBusy = Pbi 'pbi-portal' 'A1'
 $pbiOld  = Pbi 'pbi-legacy' 'A1'
 Save '25-idle-data-platforms.json' @($fab, $synIdle, $synBusy, $adx, $adxBusy, $pbiIdle, $pbiBusy, $pbiOld)
-$metrics["$($pbiIdle.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(Ts @() 'average' (Hours 480 0 0)) })
-$metrics["$($pbiBusy.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(Ts @() 'average' (Hours 480 5 40)) })
+$metrics["$($pbiIdle.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(TsHours @() 'average' 480 0 0) })
+$metrics["$($pbiBusy.id.ToLower())|cpu_metric"] = MetricResp ([ordered]@{ cpu_metric = @(TsHours @() 'average' 480 5 40) })
 $metrics["$($synIdle.id.ToLower())|connections"] = Set-Metrics $synIdle.id ([ordered]@{ Connections = 0; ActiveQueries = 0 })
 $metrics["$($synBusy.id.ToLower())|connections"] = Set-Metrics $synBusy.id ([ordered]@{ Connections = 300; ActiveQueries = 1200 })
 Set-Metric $adx.id 'IngestionVolumeInMB' 'total' @(@{ value = 5000 })       # ingests, never queried: medium
@@ -403,8 +424,8 @@ Save '29-idle-ml-compute-clusters.json' @($mlw)
 # cpu-cluster: 2 idle nodes every hour, never ran a job (high). batch-cluster: 1 idle node always, runs
 # jobs (medium). gpu-train: scales to 0 between jobs (dropped).
 $metrics["$($mlw.id.ToLower())|idle nodes"] = MetricResp ([ordered]@{
-    'Idle Nodes' = @((Ts @('ClusterName', 'cpu-cluster') 'minimum' (Hours 480 2 2)), (Ts @('ClusterName', 'batch-cluster') 'minimum' (Hours 480 1 3)), (Ts @('ClusterName', 'gpu-train') 'minimum' (Hours 480 0 1)))
-    'Idle Cores' = @((Ts @('ClusterName', 'cpu-cluster') 'minimum' (Hours 480 8 8)), (Ts @('ClusterName', 'batch-cluster') 'minimum' (Hours 480 4 12)), (Ts @('ClusterName', 'gpu-train') 'minimum' (Hours 480 0 6))) })
+    'Idle Nodes' = @((TsHours @('ClusterName', 'cpu-cluster') 'minimum' 480 2 2), (TsHours @('ClusterName', 'batch-cluster') 'minimum' 480 1 3), (TsHours @('ClusterName', 'gpu-train') 'minimum' 480 0 1))
+    'Idle Cores' = @((TsHours @('ClusterName', 'cpu-cluster') 'minimum' 480 8 8), (TsHours @('ClusterName', 'batch-cluster') 'minimum' 480 4 12), (TsHours @('ClusterName', 'gpu-train') 'minimum' 480 0 6)) })
 $metrics["$($mlw.id.ToLower())|active nodes"] = MetricResp ([ordered]@{ 'Active Nodes' = @((Ts @('ClusterName', 'cpu-cluster') 'maximum' @(0)), (Ts @('ClusterName', 'batch-cluster') 'maximum' @(6)), (Ts @('ClusterName', 'gpu-train') 'maximum' @(4))) })
 
 $peT = 'Microsoft.Network/privateEndpoints'
@@ -446,10 +467,10 @@ $vmMem   = BigVm $P 'rg-api' 'vm-cache-01' 'Standard_E8s_v5'      # CPU idle, bu
 $vmNoMem = BigVm $D 'rg-build' 'vm-batch-old' 'Standard_D4s_v5' @{ env = 'dev' }   # CPU idle, no memory metric: medium
 Save '37-underused-vms.json' @($vmOver, $vmBusy, $vmSmall, $vmMem, $vmNoMem)
 # vm-api-01: memory 65-80% available (at most 35% used), so it fits in half: high
-$metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 3.5)); 'Available Memory Percentage' = @(Ts @() 'average' (Hours 480 65 80)) })
-$metrics["$($vmMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 2)); 'Available Memory Percentage' = @(Ts @() 'average' (Hours 480 25 45)) })
-$metrics["$($vmNoMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 2)) })
-$metrics["$($vmBusy.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 20 60)) })
+$metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(TsHours @() 'average' 480 0.5 3.5); 'Available Memory Percentage' = @(TsHours @() 'average' 480 65 80) })
+$metrics["$($vmMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(TsHours @() 'average' 480 0.5 2); 'Available Memory Percentage' = @(TsHours @() 'average' 480 25 45) })
+$metrics["$($vmNoMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(TsHours @() 'average' 480 0.5 2) })
+$metrics["$($vmBusy.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(TsHours @() 'average' 480 20 60) })
 
 # Reservations: one order, found through a usage record's additionalProperties. Fields as in the CLI's schema. r1 used 30% of its hours
 # (flagged, high); r2 used 96% (dropped).

@@ -116,7 +116,7 @@ function Get-FixtureResponse([string] $cmd, [string[]] $AzArgs) {
             $id = $AzArgs[[array]::IndexOf($AzArgs, '--resource') + 1].ToLower()
             $metric = $AzArgs[[array]::IndexOf($AzArgs, '--metric') + 1].ToLower()
             $m = $null   # parsed once per run ($FixtureCache): Get-MetricStats only reads it
-            if (-not $FixtureCache.TryGetValue('metrics.json', [ref] $m)) { $m = & $read 'metrics.json'; [void] $FixtureCache.TryAdd('metrics.json', $m) }
+            if (-not $FixtureCache.TryGetValue('metrics.json', [ref] $m)) { $m = Expand-FixtureSeries (& $read 'metrics.json'); [void] $FixtureCache.TryAdd('metrics.json', $m) }
             if ($m) { foreach ($k in "$id|$metric", $id) { if ($m.ContainsKey($k)) { return $m[$k] } } }
             return @{ value = @() }
         }
@@ -138,6 +138,28 @@ function Get-FixtureResponse([string] $cmd, [string[]] $AzArgs) {
             return @(@(& $read 'consumption.json') | Where-Object { $_ -and $_.instanceId -like "/subscriptions/$sub/*" })
         }
     }
+}
+
+# Fixture mode: long hourly series are stored in metrics.json as a description,
+# { hourly = { agg, count, lo, hi, end } }, written by TsHours in tests/New-Fixtures.ps1, and expanded
+# here into the points az would return: <count> hourly points ending at <end>, cycling between lo and hi.
+function Expand-FixtureSeries($Metrics) {
+    if (-not $Metrics) { return $Metrics }
+    foreach ($resp in @($Metrics.Values)) {
+        foreach ($v in @(Get-Key $resp 'value')) {
+            foreach ($ts in @(Get-Key $v 'timeseries')) {
+                $h = Get-Key $ts 'hourly'
+                if (-not $h) { continue }
+                $n = [int] $h['count']; $lo = [double] $h['lo']; $hi = [double] $h['hi']; $agg = [string] $h['agg']
+                $end = [DateTime]::Parse([string] $h['end'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+                $start = $end.AddHours(-$n)
+                $ts['data'] = @(for ($i = 0; $i -lt $n; $i++) {
+                    @{ timeStamp = $start.AddHours($i).ToString('yyyy-MM-ddTHH:00:00Z'); $agg = $lo + ($hi - $lo) * (($i * 7) % 20) / 19 } })
+                [void] $ts.Remove('hourly')
+            }
+        }
+    }
+    return $Metrics
 }
 
 function Invoke-GraphQuery([string] $QueryFile, [string[]] $Subscriptions, [string] $MgId) {

@@ -147,7 +147,8 @@
   },
 
   "sqlDatabase": {
-    "_about": "Compute only; storage and backup are extra. DTU tiers per month, vCore tiers per vCore-hour.",
+    "_about": "Compute only; storage and backup are extra. DTU tiers per month, vCore tiers per vCore-hour. zoneRedundancyPerVcoreHour: the General Purpose zone-redundancy add-on (Gen5).",
+    "zoneRedundancyPerVcoreHour": 0.09133,
     "dtuPerMonth": { "Basic": 4.90, "S0": 14.72, "S1": 29.43, "S2": 73.58, "S3": 147.17, "S4": 294.34, "S6": 588.67, "S7": 1177.34,
                      "S9": 2354.69, "S12": 4415.03, "P1": 456.25, "P2": 912.50, "P4": 1825.00, "P6": 3650.00, "P11": 6862.12, "P15": 15698.30 },
     "vcorePerHour": { "GeneralPurpose": 0.2523, "BusinessCritical": 0.6773, "Hyperscale": 0.2738 }

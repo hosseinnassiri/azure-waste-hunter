@@ -146,6 +146,10 @@ Ask the user instead.
   and must use its own folders under `$Work`. Tests that depend on each other's folders share a `-Group`
   and run in order in one worker (the two `history` tests). A first scan of the unmodified fixtures is
   `Copy-BaseRun`, not a new run.
+- Long hourly metric series in fixtures (the 480+ point ones) are written with `TsHours` in
+  `New-Fixtures.ps1` as a description (count, low, high, aggregation, end) and expanded by
+  `Expand-FixtureSeries` when fixture mode loads `metrics.json`. Don't write literal points: they made
+  the file ~430 KB.
 
 ## Validating changes
 
