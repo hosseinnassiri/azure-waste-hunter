@@ -73,5 +73,5 @@ expected finding set.
 
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
-3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 still need a live check once `resource-graph` is installed).
+3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 checked live on 2026-11-27, which caught and fixed a Resource Graph join limit in 22).
 4. Product: split the runner with one record per type (done), trends (done), scheduled CI, MCA billing.

@@ -24,7 +24,9 @@ recoveryservicesresources
   ) on sourceId
 | where isnull(vmExists)
 | join kind=leftouter (
-    resources
+    // Vaults are in recoveryservicesresources too. Resource Graph allows `resources` as the right side
+    // of a join only once per query, and the VM check above already uses it.
+    recoveryservicesresources
     | where type =~ 'microsoft.recoveryservices/vaults'
     | project vaultId = tolower(id), rTags = tags, vaultLocation = location, vaultName = name
   ) on vaultId
