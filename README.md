@@ -49,6 +49,7 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 36 | Geo-redundant storage in non-production | GRS/GZRS accounts tagged dev/test/... holding 10 GiB or more |
 | 37 | Oversized VMs | 4+ vCPUs with hourly CPU under 5% in 95% of hours, and memory that fits in half the size (saving: one size down) |
 | 38 | Full snapshots that could be incremental | full snapshots under 90 days old on Premium storage, or one of several full snapshots of the same disk (saving: upper bound) |
+| 39 | Scale set instances stopped but not deallocated | Uniform scale set instances in `PowerState/stopped` (AKS nodes at medium confidence); idle time from 90 days of CPU metrics |
 
 Types 8–12, 16–18, 23–29, 36 and 37 start as candidates from Resource Graph and are only reported
 when 30 days of Azure Monitor metrics confirm them. Type 34 has no Resource Graph query: reservations
@@ -214,7 +215,6 @@ price isn't readable either, so these findings show the unused share of hours, n
 - `az consumption usage list` returns no per-resource cost for some billing account types (MCA,
   some Visual Studio offers). The report warns and falls back to Advisor or list prices.
 - Resource Graph has no creation time for NICs, public IPs or App Service plans, so their age shows as unknown.
-- Uniform VM scale set instances aren't covered yet.
 - Machine Learning compute instances aren't in Resource Graph and have no idle metric, so only compute
   clusters are checked (through their workspace's node metrics, which don't name the VM size: idle
   cores are priced at a CPU rate).
@@ -228,7 +228,7 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/settings.json                       deny rules backing those rules
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
-  queries/01..38-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23-29, 36-37: metric-confirmed candidates; 34 has none)
+  queries/01..39-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23-29, 36-37: metric-confirmed candidates; 34 has none)
   scripts/Invoke-WasteHunt.ps1              runner: allow list, scope, scan, merge, rank
   scripts/lib/*.ps1                         its functions (az reads, metrics, pricing, dispatch) and the report writer
   scripts/types/NN-*.ps1                    one record per waste type: label, flags, metric check, prices, suggested action

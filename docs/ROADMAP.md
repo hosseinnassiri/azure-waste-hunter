@@ -44,7 +44,7 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 | ★★ | Cosmos DB provisioned RU/s far above use — **done** (query 24, see section 5) | metric-confirmed | often hundreds/month |
 | ★★ | Idle Redis, API Management, Service Bus/Event Hubs, Synapse dedicated pools, Data Explorer, Fabric capacities — **done** (queries 25-28; Power BI Embedded not yet) | metric-confirmed | high |
 | ★ | Full (non-incremental) snapshots that could be incremental | Resource Graph | storage saving |
-| ★ | Uniform scale set instances stopped but not deallocated (known limitation) | check whether `computeresources` exposes their power state | |
+| ★ | Uniform scale set instances stopped but not deallocated — **done** (query 39) | Resource Graph `computeresources` | compute |
 | ★★ | Underused reservations — **done** (type 34, no query) | `az consumption reservation summary list`, for orders found in usage records or passed with `-ReservationOrder` (listing every order would need a command outside the allowed list) | the unused share of the commitment |
 
 Each new type needs fixture cases it must flag, cases it must drop, and an entry in the suite's
@@ -113,7 +113,7 @@ Everything in sections 1-5 is done or decided against. The open items:
 | ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |
 | ~~★~~ | ~~Power BI Embedded (A SKUs) capacities left running~~ — **done** 2026-11-27 | type 25 platform `powerbi`: Gen2 `cpu_metric` under 1% in the busiest hour (high at 0%), no CPU data (Gen1, or no activity) low |
 | ~~★~~ | ~~Full snapshots that could be incremental~~ — **done** 2026-11-27 | query 38: Premium full snapshots (medium) and all but the newest of 2+ full snapshots of a disk (low, upper bound), under 90 days old so they don't overlap query 06 |
-| ★ | Uniform scale set instances stopped but not deallocated | check whether `computeresources` exposes their power state |
+| ~~★~~ | ~~Uniform scale set instances stopped but not deallocated~~ — **done** 2026-11-27 | query 39: `computeresources` has `properties.extended.instanceView.powerState.code` for Uniform instances (Flexible ones are VMs, already #5). Tags and Spot priority come from a join to the scale set; AKS nodes are medium with a node-pool action. Checked live: the query runs (no scale sets in the tenant, so the instance property paths `sku.name`, `properties.timeCreated`, `properties.licenseType` are unverified) |
 | ★ | Service Bus Standard, IPv6 prefixes, classic Front Door | skipped by types 27, 31 and 32 (small or differently billed) |
 
 ### Features

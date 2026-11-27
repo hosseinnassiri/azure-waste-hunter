@@ -53,6 +53,8 @@ foreach ($lib in $LibFiles) { . $lib }
 # Waste types: one record per type in types/NN-<name>.ps1 (see lib/WasteTypes.ps1). A bad record stops here.
 $TypesDir = Join-Path $PSScriptRoot 'types'
 $WasteTypes = Import-WasteTypes $TypesDir
+# Stopped-but-allocated VMs and scale set instances: idle days come from the last CPU datapoint
+$StoppedVmTypes = @('vm-stopped-not-deallocated', 'vmss-instance-stopped-not-deallocated')
 
 # 'pwsh -File' can't pass arrays, so also accept comma-separated lists: -Subscription "A,B"
 if ($Subscription) { $Subscription = @($Subscription | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
@@ -385,8 +387,8 @@ try {
             # ...and again after, for findings a check creates (an OpenAI deployment, Hot blobs on an account)
             foreach ($row in $passRows) { Set-Exclusion $row }
 
-            # Idle time for stopped VMs (needs this tenant's context)
-            $vms = @($passRows | Where-Object { $_.wasteType -eq 'vm-stopped-not-deallocated' -and -not $_.ignored })
+            # Idle time for stopped VMs and scale set instances (needs this tenant's context)
+            $vms = @($passRows | Where-Object { $_.wasteType -in $StoppedVmTypes -and -not $_.ignored })
             if ($vms -and -not $SkipMetrics) {
                 $acts = @(Invoke-InParallel @($vms | ForEach-Object { $_.id }) 'Get-LastCpuActivity')
                 for ($k = 0; $k -lt $vms.Count; $k++) {
@@ -520,7 +522,7 @@ foreach ($r in @($detected) + @($advisor)) {
     }
 
     # Idle time for stopped VMs
-    if ($r.wasteType -eq 'vm-stopped-not-deallocated') {
+    if ($r.wasteType -in $StoppedVmTypes) {
         $ii = $idleInfo[$key]
         if ($SkipMetrics -or -not $ii) { $f.idleSource = 'not measured' }
         elseif ($ii.Last) { $f.idleDays = [int] [math]::Floor(($Now - $ii.Last).TotalDays); $f.idleSource = "last CPU datapoint $($ii.Last.ToString('yyyy-MM-dd'))" }

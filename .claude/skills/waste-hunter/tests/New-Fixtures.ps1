@@ -78,6 +78,18 @@ Save '05-vms-stopped-not-deallocated.json' @(
         createdTime = (Ago 800); ageDays = 800; idleSource = 'pending (CPU metrics)'; sku = 'Standard_B2ms'; tier = 'Regular'; os = 'Windows'; extra = ''
         reason = 'Power state is Stopped (not deallocated), so compute is still billed' }))
 
+# Uniform scale set instances (query 39): ids end in /virtualMachines/<instance id>, names are <set>_<n>
+$vmssType = 'microsoft.compute/virtualmachinescalesets/virtualmachines'
+$vmssWeb = (Rid $P 'rg-web' 'Microsoft.Compute/virtualMachineScaleSets' 'vmss-web') + '/virtualMachines/3'
+$vmssAks = (Rid $P 'mc_rg-aks_aks-prod_eastus' 'Microsoft.Compute/virtualMachineScaleSets' 'aks-nodepool1-12345678-vmss') + '/virtualMachines/1'
+Save '39-vmss-instances-stopped-not-deallocated.json' @(
+    (Row 'vmss-instance-stopped-not-deallocated' $P 'rg-web' 'x' 'x' 'eastus' @{ id = $vmssWeb; name = 'vmss-web_3'; type = $vmssType; owner = 'web@example.com'; app = 'web'; env = 'prod'
+        createdTime = (Ago 150); ageDays = 150; idleSource = 'pending (CPU metrics)'; sku = 'Standard_D2s_v5'; tier = 'Regular'; os = 'Linux'
+        reason = 'Scale set instance (vmss-web) is Stopped, not deallocated, so compute is still billed' }),
+    (Row 'vmss-instance-stopped-not-deallocated' $P 'mc_rg-aks_aks-prod_eastus' 'x' 'x' 'eastus' @{ id = $vmssAks; name = 'aks-nodepool1-12345678-vmss_1'; type = $vmssType
+        createdTime = (Ago 300); ageDays = 300; idleSource = 'pending (CPU metrics)'; sku = 'Standard_D4s_v5'; tier = 'Regular'; os = 'Linux'; confidence = 'medium'
+        reason = 'AKS node (node pool nodepool1) is Stopped, not deallocated, so compute is still billed; managed by AKS' }))
+
 $snap = 'Microsoft.Compute/snapshots'
 Save '06-old-snapshots.json' @(
     (Row 'old-snapshot' $P 'rg-sql-prod' $snap 'snap-sql-pre-upgrade-2025' 'australiaeast' @{ owner = 'data-team@example.com'; app = 'billing-db'; env = 'prod'
@@ -459,6 +471,9 @@ Save 'rg-owners.json' @(
 # CPU metrics: build agent last ran 47 days ago (so the 2nd 30-day window has data); jumpbox has none
 $pts = @(for ($i = 60; $i -ge 47; $i--) { @{ timeStamp = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 35.5 } })
 $metrics[$vmBuild.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) }
+# Scale set instance last ran 12 days ago; the AKS node has none
+$pts = @(for ($i = 20; $i -ge 12; $i--) { @{ timeStamp = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 12.0 } })
+$metrics[$vmssWeb.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) }
 $metrics | ConvertTo-Json -Depth 12 -Compress | Set-Content (Join-Path $Out 'metrics.json') -Encoding utf8
 
 # Billed usage: 30 days for the build agent and the SQL disk, in demo-prod / demo-dev

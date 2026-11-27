@@ -1,0 +1,44 @@
+// waste-hunter 39 · Uniform scale set instances stopped but not deallocated
+// The same waste as query 05, for instances of a scale set in Uniform orchestration mode. Those live in
+// the computeresources table, not in resources (Flexible-mode instances are ordinary VMs, so query 05
+// covers them). 'PowerState/stopped' keeps the host reserved and compute billed at the full rate.
+// Instances usually carry no tags of their own, so owner, app, env and the ignore tag also come from
+// the scale set. Instances of an AKS node pool get medium confidence: the fix is on the node pool,
+// not the instance. Idle time comes from the last Percentage CPU datapoint, as for query 05.
+// READ-ONLY. Run:  az graph query -q @39-vmss-instances-stopped-not-deallocated.kql --first 1000
+computeresources
+| where type =~ 'microsoft.compute/virtualmachinescalesets/virtualmachines'
+| extend powerState = tostring(properties.extended.instanceView.powerState.code)
+| where powerState =~ 'PowerState/stopped'
+| extend setId = tolower(extract(@'(?i)^(.*/virtualmachinescalesets/[^/]+)/', 1, id))
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.compute/virtualmachinescalesets'
+    | project setId = tolower(id), setName = name,
+              setOwner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+              setApp = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+              setEnv = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+              setAksPool = tostring(tags['aks-managed-poolName']),
+              setIgnored = tostring(tags) contains '"waste-hunter:ignore":"true"',
+              setPriority = tostring(properties.virtualMachineProfile.priority),
+              setOs = tostring(properties.virtualMachineProfile.storageProfile.osDisk.osType),
+              setLicense = tostring(properties.virtualMachineProfile.licenseType),
+              setCreated = todatetime(properties.timeCreated)
+  ) on setId
+| extend createdTime = coalesce(todatetime(properties.timeCreated), setCreated)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend aksPool = coalesce(setAksPool, tostring(tags['aks-managed-poolName']))
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy']), setOwner),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application']), setApp),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment']), setEnv),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"' or coalesce(setIgnored, false)
+| project wasteType = 'vmss-instance-stopped-not-deallocated', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (CPU metrics)',
+          sku = tostring(sku.name), tier = iff(isempty(setPriority), 'Regular', setPriority), sizeGb = int(null),
+          os = coalesce(tostring(properties.storageProfile.osDisk.osType), setOs),
+          extra = coalesce(tostring(properties.licenseType), setLicense),
+          confidence = iff(isempty(aksPool), 'high', 'medium'),
+          reason = iff(isempty(aksPool),
+                       strcat('Scale set instance (', coalesce(setName, 'scale set not readable'), ') is Stopped, not deallocated, so compute is still billed'),
+                       strcat('AKS node (node pool ', aksPool, ') is Stopped, not deallocated, so compute is still billed; managed by AKS')),
+          ignored

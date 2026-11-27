@@ -77,7 +77,7 @@ try {
                 'createdTime', 'ageDays', 'idleDays', 'idleSource', 'sku', 'tier', 'sizeGb', 'os', 'extra', 'confidence', 'reason', 'ignored'
 
     Test 'Queries: every file is marked read-only and uses the shared column set' {
-        Assert ($queries.Count -ge 37) "expected 37+ queries, found $($queries.Count)"
+        Assert ($queries.Count -ge 38) "expected 38+ queries, found $($queries.Count)"
         foreach ($q in $queries) {
             $t = Get-Content $q.FullName -Raw
             Assert ($t -match 'READ-ONLY') "$($q.Name) has no READ-ONLY note"
@@ -234,6 +234,7 @@ try {
         'premium-disk-deallocated-vm|vm-retired-app_OsDisk', 'unassociated-public-ip|pip-old-lb-frontend', 'unassociated-public-ip|pip-test-dyn',
         'unassociated-public-ip|pip-vm-old01', 'unattached-disk|asrseeddisk-web01-a1b2c3', 'unattached-disk|disk-sql-data-old', 'unattached-disk|disk-temp-build',
         'vm-stopped-not-deallocated|vm-build-agent-02', 'vm-stopped-not-deallocated|vm-win-jumpbox',
+        'vmss-instance-stopped-not-deallocated|vmss-web_3', 'vmss-instance-stopped-not-deallocated|aks-nodepool1-12345678-vmss_1',
         'idle-ddos-protection-plan|ddos-legacy-plan', 'stopped-app-service-plan|asp-intranet-old', 'stopped-app-service-plan|asp-free-stopped',
         'orphaned-vm-backup|rsv-dev/vm-old01', 'orphaned-workload-backup|rsv-dev/vm-old01/billing', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
         'overprovisioned-cosmos-db|cosmos-orders-legacy', 'overprovisioned-cosmos-db|cosmos-dev-idle',
@@ -349,6 +350,15 @@ try {
         Assert ($amr.referenceCommandNotExecuted -match '^az redisenterprise delete') 'Managed Redis uses the redisenterprise command'
         Assert ($amr.suggestedAction -match 'turning off high availability halves') 'Managed Redis with HA: mention the dev/test option'
     }
+    Test 'Scale set instances: per-instance deallocate command; AKS nodes go through the node pool at medium confidence' {
+        $inst = Get-Row $base 'vmss-web_3'
+        Assert-Equal 'az vmss deallocate --resource-group rg-web --name vmss-web --instance-ids 3' $inst.referenceCommandNotExecuted 'instance command names the set and instance id'
+        Assert-Equal 'high' $inst.confidence 'plain scale set instance'
+        $aks = Get-Row $base 'aks-nodepool1-12345678-vmss_1'
+        Assert-Equal 'medium' $aks.confidence 'AKS node'
+        Assert ($aks.referenceCommandNotExecuted -match '^az aks nodepool scale') 'AKS node is fixed on the node pool'
+        Assert ($aks.suggestedAction -match "Don't deallocate it directly") 'AKS node: warn against deallocating the instance'
+    }
     Test 'Costs: deterministic offline prices and billed costs' {
         $cases = [ordered]@{ 'vm-win-jumpbox' = '97.53'; 'nat-dev-unused' = '32.85'; 'sql-legacy/reporting-old' = '147.17'; 'lb-old-web' = '18.25'
                              'vm-build-agent-02' = '276.48'; 'oai-research/gpt-ptu-eval' = '10950'; 'ca-orders-legacy' = '46.66'; 'crlegacybuild' = '100'
@@ -357,7 +367,8 @@ try {
                              'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
                              'adx-telemetry' = '2020.64'; 'pbi-reports' = '1465.91'; 'pbi-legacy' = '735.91'; 'redis-session-old' = '100.74'; 'amr-sessions-legacy' = '227.76'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
                              'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
-                             'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'snap-sql-daily-premium' = '35.84'; 'snap-build-weekly-03' = '12.8'; 'vm-api-01' = '280.32' }
+                             'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'snap-sql-daily-premium' = '35.84'; 'snap-build-weekly-03' = '12.8'; 'vm-api-01' = '280.32'
+                             'vmss-web_3' = '70.08'; 'aks-nodepool1-12345678-vmss_1' = '140.16' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
         Assert ((Get-Row $base 'vm-build-agent-02').costSource -like 'billed*') 'vm-build-agent-02 should use billed cost'
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'
@@ -377,6 +388,8 @@ try {
     Test 'Idle: VM idle time comes from the second 30-day metrics window (no 30-day clipping)' {
         Assert-Equal '47' (Get-Row $base 'vm-build-agent-02').idleDays 'vm-build-agent-02 idle days'
         Assert ((Get-Row $base 'vm-win-jumpbox').idleSource -match '90\+') 'jumpbox with no CPU data should be 90+'
+        Assert-Equal '12' (Get-Row $base 'vmss-web_3').idleDays 'scale set instance idle days come from its last CPU datapoint too'
+        Assert ((Get-Row $base 'aks-nodepool1-12345678-vmss_1').idleSource -match '90\+') 'AKS node with no CPU data should be 90+'
     }
     Test 'Coverage: disabled subscription is not scanned (nested-array regression)' {
         Assert ($base.Report -match '2 of 2 subscription\(s\) visible') 'expected "2 of 2 subscription(s) visible"'
@@ -617,8 +630,8 @@ try {
     Test 'Quick wins: high-confidence, reversible or dependency-free findings only, most costly first' {
         Assert ($base.Report -match '(?s)## Quick wins: [\d,.]+ USD/month(.*?)\n## ') 'Quick wins section missing'
         $qw = $Matches[1]
-        foreach ($n in 'ddos-legacy-plan', 'afd-old-site', 'syn-ws/dw-legacy', 'mlw-research/cpu-cluster', 'cosmos-dev-idle') { Assert ($qw -match [regex]::Escape("[$n]")) "$n should be a quick win" }
-        foreach ($n in 'stmediaarchive', 'disk-sql-data-old', 'rsv-dev/vm-old01', 'redis-session-old', 'sb-legacy-orders', 'pe-sql-rejected', 'fab-analytics', 'tm-unused', 'vm-dev-api') {
+        foreach ($n in 'ddos-legacy-plan', 'afd-old-site', 'syn-ws/dw-legacy', 'mlw-research/cpu-cluster', 'cosmos-dev-idle', 'vmss-web_3') { Assert ($qw -match [regex]::Escape("[$n]")) "$n should be a quick win" }
+        foreach ($n in 'stmediaarchive', 'disk-sql-data-old', 'rsv-dev/vm-old01', 'redis-session-old', 'sb-legacy-orders', 'pe-sql-rejected', 'fab-analytics', 'tm-unused', 'vm-dev-api', 'aks-nodepool1-12345678-vmss_1') {
             Assert ($qw -notmatch [regex]::Escape("[$n]")) "$n must not be a quick win (data store, dependency, not high confidence, or free)"
         }
         Assert-Equal 15 ([regex]::Matches($qw, '(?m)^\| \[')).Count 'quick wins are capped at 15'
