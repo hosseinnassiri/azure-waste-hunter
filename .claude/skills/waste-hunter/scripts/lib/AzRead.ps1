@@ -115,7 +115,8 @@ function Get-FixtureResponse([string] $cmd, [string[]] $AzArgs) {
             # Keyed "<resource id>|<first metric name>" (lower case), falling back to "<resource id>"
             $id = $AzArgs[[array]::IndexOf($AzArgs, '--resource') + 1].ToLower()
             $metric = $AzArgs[[array]::IndexOf($AzArgs, '--metric') + 1].ToLower()
-            $m = & $read 'metrics.json'
+            $m = $null   # parsed once per run ($FixtureCache): Get-MetricStats only reads it
+            if (-not $FixtureCache.TryGetValue('metrics.json', [ref] $m)) { $m = & $read 'metrics.json'; [void] $FixtureCache.TryAdd('metrics.json', $m) }
             if ($m) { foreach ($k in "$id|$metric", $id) { if ($m.ContainsKey($k)) { return $m[$k] } } }
             return @{ value = @() }
         }
@@ -169,7 +170,7 @@ function Invoke-InParallel([object[]] $Items, [string] $Function) {
         return
     }
     $vars = @{ Now = $Now; MinAgeDays = $MinAgeDays; FixtureDir = $FixtureDir; AllowedAz = $AllowedAz; AzEvents = $AzEvents; MetricCache = $MetricCache
-               FixtureFaults = $FixtureFaults; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts; Pricing = $Pricing }
+               FixtureFaults = $FixtureFaults; FixtureCache = $FixtureCache; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts; Pricing = $Pricing }
     $indexed = for ($i = 0; $i -lt $Items.Count; $i++) { [pscustomobject] @{ I = $i; Item = $Items[$i] } }
     $out = @($indexed | ForEach-Object -ThrottleLimit $Parallel -Parallel {
         Set-StrictMode -Version Latest

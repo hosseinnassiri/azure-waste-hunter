@@ -144,7 +144,7 @@ Ask the user instead.
 ## Validating changes
 
 **Run the test suite before every commit.** It must pass:
-`pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` (offline, about 2 minutes; CI runs it
+`pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` (offline, about 7-8 minutes; CI runs it
 too). A new waste type needs fixture cases it must flag and cases it must drop, plus an entry in the
 suite's expected finding set. A bug fix needs a test that fails without it.
 

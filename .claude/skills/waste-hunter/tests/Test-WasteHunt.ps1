@@ -43,9 +43,14 @@ function Assert-Equal($Expected, $Actual, [string] $What) { if ("$Expected" -ne 
 # Run the runner on a fixture folder; returns the report folder's parsed outputs
 # Each run gets its own parent folder, so runs never compare against each other unless a test passes
 # a shared -Parent on purpose (the "Changes" tests).
-function Invoke-Run([string] $FixtureDir, [string] $Name, [string[]] $Extra = @(), [string] $Parent) {
+function Invoke-Run([string] $FixtureDir, [string] $Name, [string[]] $Extra = @(), [string] $Parent, [switch] $KeepParallel) {
     if (-not $Parent) { $Parent = Join-Path $Work "run-$Name" }
     $out = Join-Path $Parent $Name
+    # Fixture az calls answer instantly, so parallel metric checks only add runspace setup (about 6 s a
+    # run). Runs are sequential unless they ask otherwise. The base run and the retry runs keep the
+    # default, and 'Parallel: ...' compares the base run with a sequential one, so a variable missing
+    # from Invoke-InParallel's $vars still fails the suite.
+    if (-not $KeepParallel -and $Extra -notcontains '-Parallel') { $Extra = @($Extra) + @('-Parallel', '1') }
     $log = & pwsh -NoProfile -File $Runner -FixtureDir $FixtureDir -OfflinePricing -OutDir $out @Extra 2>&1
     if ($LASTEXITCODE -ne 0) { throw "runner exited $LASTEXITCODE`n$($log | Select-Object -Last 15 | Out-String)" }
     return [pscustomobject] @{
@@ -271,7 +276,7 @@ try {
     }
 
     Write-Host 'Full run on synthetic fixtures (offline pricing)'
-    $base = Invoke-Run $Fixtures 'base'
+    $base = Invoke-Run $Fixtures 'base' -KeepParallel
     $expected = @(
         'advisor-cost|demo-prod', 'empty-app-service-plan|asp-legacy-api', 'empty-app-service-plan|asp-playground',
         'empty-app-service-plan|asp-reports-weu', 'empty-resource-group|rg-old-poc', 'hot-blob-unread|stmediaarchive', 'idle-application-gateway|agw-legacy-portal',
@@ -570,7 +575,7 @@ try {
             @{ cmd = 'graph query'; match = '01-unattached-disks'; failures = 2; stderr = $throttle }
             @{ cmd = 'monitor metrics list'; match = 'bas-dev'; failures = 1; stderr = 'ERROR: (ServiceUnavailable) The service is temporarily unavailable. Status 503' }
             @{ cmd = 'graph query'; match = '02-orphaned-nics'; failures = 1; stderr = "ERROR: AADSTS700082: The refresh token has expired. Run 'az login'." })
-        $r = Invoke-Run $fx 'retry'
+        $r = Invoke-Run $fx 'retry' -KeepParallel
         foreach ($n in 'disk-sql-data-old', 'bas-dev', 'vm-retired-app_OsDisk', 'vm-retired-app_data1') { Get-Row $r $n | Out-Null }
         Assert ($r.Report -match '02-orphaned-nics\.kql: az graph query failed \(exit 1\): ERROR: AADSTS700082') 'a sign-in error must fail at once, not be retried'
         Assert (-not ($r.Rows | Where-Object { $_.wasteType -eq 'orphaned-nic' })) 'orphaned NICs should be missing (their query failed)'
@@ -583,7 +588,7 @@ try {
     Test 'Retry: throttling that outlasts every attempt fails the query (partial), never a silent clean result' {
         $fx = Copy-Fixtures 'retry-max'
         Set-Faults $fx @(@{ cmd = 'graph query'; match = '01-unattached-disks'; failures = 4; stderr = $throttle })
-        $r = Invoke-Run $fx 'retry-max'
+        $r = Invoke-Run $fx 'retry-max' -KeepParallel
         Assert ($r.Report -match '01-unattached-disks\.kql: az graph query failed') 'query should fail after the last attempt'
         Assert ($r.Report -match '\| partial \|') 'tenant should be partial'
         Assert-Equal 3 (Get-AzStats $r).Retried 'retries before giving up (4 attempts)'

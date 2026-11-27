@@ -145,6 +145,9 @@ if ($FixtureDir -and (Test-Path (Join-Path $FixtureDir 'faults.json'))) {
         @{ Cmd = [string] $f['cmd']; Match = [string] $f['match']; Stderr = [string] $f['stderr']; Tokens = $tokens }
     })
 }
+# Fixture mode: metrics.json parsed once per run, not on every metric call (it's ~400 KB, and parsing it
+# was a third of a test run). Shared with the parallel runspaces; its readers never modify it.
+$FixtureCache = [Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
 
 # Offline mode. Reads canned responses from -FixtureDir so the whole pipeline runs without Azure.
 
