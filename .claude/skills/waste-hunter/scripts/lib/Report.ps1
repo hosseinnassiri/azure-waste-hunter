@@ -76,12 +76,25 @@ $ownerGroups = @(@($findings) | Group-Object { $_.owner ? ([string] $_.owner).Tr
 # Machine-readable record: the baseline for the next scan's "changes since last scan"
 $record = [ordered]@{
     meta = [ordered]@{ generated = $RunTime.ToString('o'); scope = $ScopeLabel; currency = $Currency; synthetic = [bool] $FixtureDir
-                       scannedSubscriptions = @($ScannedSubs) }
+                       scannedSubscriptions = @($ScannedSubs)
+                       # What changed against the baseline (absent on a baseline scan); read by later scans' trends
+                       changes = $prev ? [ordered]@{ new = @($findings | Where-Object { $_.status -eq 'new' }).Count; open = @($findings | Where-Object { $_.status -eq 'open' }).Count
+                                                     resolved = @($resolved).Count; notRechecked = @($notRechecked).Count; nowExcluded = @($nowExcluded).Count } : $null }
+    # Findings this scan resolved (gone, and rechecked), with when they were first seen: time to resolve
+    resolved = @(foreach ($p in @($resolved | Where-Object { $null -ne $_ })) { [ordered]@{ key = $p['key']; wasteType = $p['wasteType']; name = $p['name']; owner = $p['owner']
+        monthlyCost = $p['monthlyCost']; currency = $p['currency']; firstSeen = $p['firstSeen']; resolvedOn = $today } })
     findings = @(foreach ($i in $findings) { [ordered]@{ key = Get-FindingKey $i; wasteType = $i.wasteType; id = $i.id; name = $i.name
         subscriptionId = $i.subscriptionId; resourceGroup = $i.resourceGroup; owner = $i.owner
         monthlyCost = $i.monthlyCost; currency = $i.currency; confidence = $i.confidence; firstSeen = $i.firstSeen } })
 }
 $record | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir 'findings.json') -Encoding utf8
+
+# trends.csv: one row per scan (amounts per currency, as "120.00 CAD + 35.00 USD"), for charting
+if ($Trend) {
+    @($Trend.Scans | ForEach-Object { [pscustomobject] [ordered] @{ date = $_.Date; folder = $_.Folder; findings = $_.Findings
+        estimatedMonthly = (Format-Money $_.Totals); highConfidence = (Format-Money $_.High); new = $_.New; resolved = $_.Resolved } }) |
+        Export-Csv (Join-Path $OutDir 'trends.csv') -Encoding utf8
+}
 
 $md = [Text.StringBuilder]::new()
 function L([string] $s = '') { [void] $md.AppendLine($s) }
@@ -156,6 +169,38 @@ else {
     }
 }
 L ''
+
+if ($Trend) {
+    $shown = @($Trend.Scans | Select-Object -Last 13)
+    L '## Trends'
+    L ''
+    L "$($Trend.Scans.Count) scan(s) of this scope$(($Trend.Scans.Count -gt $shown.Count) ? ", last $($shown.Count) shown (all in ``trends.csv``)" : ' (also in `trends.csv`)')."
+    L ''
+    L '| Scan | Findings | Est. monthly | High confidence | New | Resolved |'
+    L '|---|---:|---:|---:|---:|---:|'
+    foreach ($sc in $shown) {
+        $label = $sc.Current ? "**$($sc.Date) (this scan)**" : "$($sc.Date) <sub>$(Esc $sc.Folder)</sub>"
+        L "| $label | $($sc.Findings) | $(Format-Money $sc.Totals) | $(Format-Money $sc.High) | $($sc.New ?? '-') | $($sc.Resolved ?? '-') |"
+    }
+    L ''
+    if ($Trend.ResolvedTimed) {
+        L "**Time to resolve:** median $($Trend.MedianDays) day(s) from first seen to resolved, over $($Trend.ResolvedTimed) resolved finding(s)."
+        $owners = @($Trend.ByOwner | Select-Object -First 10)
+        if ($owners.Count -gt 1 -or ($owners.Count -eq 1 -and $owners[0].Owner)) {
+            L ''
+            L '| Owner | Resolved | Median days to resolve |'
+            L '|---|---:|---:|'
+            foreach ($o in $owners) { L "| $($o.Owner ? (Esc $o.Owner) : '**no owner tag**') | $($o.Count) | $($o.MedianDays) |" }
+        }
+        L ''
+    }
+    if ($Trend.Oldest) {
+        L ('**Open longest:** ' + ((@($Trend.Oldest | ForEach-Object {
+            $c = ($null -ne $_.MonthlyCost) ? (', {0:N2} {1}/month' -f [double] $_.MonthlyCost, $_.Currency) : ''
+            "$(Esc $_.Name) [$($TypeInfo[[string] $_.WasteType] ?? $_.WasteType)] open $($_.Days) day(s) since $($_.FirstSeen)$c$(($_.Owner) ? ", $(Esc $_.Owner)" : '')" })) -join '; ') + '.')
+        L ''
+    }
+}
 
 if ($ownerGroups) {
     L '## By owner'
@@ -323,6 +368,20 @@ if ($ownerGroups) {
     HL '</tbody></table></div>'
 }
 
+if ($Trend) {
+    HL '<h2>Trends</h2><div class="wrap"><table><thead><tr><th>Scan</th><th class="num">Findings</th><th class="num">Est. monthly</th><th class="num">High confidence</th><th class="num">New</th><th class="num">Resolved</th></tr></thead><tbody>'
+    foreach ($sc in @($Trend.Scans | Select-Object -Last 13)) {
+        $label = $sc.Current ? "<b>$(ConvertTo-HtmlText $sc.Date) (this scan)</b>" : "$(ConvertTo-HtmlText $sc.Date)<div class=""small"">$(ConvertTo-HtmlText $sc.Folder)</div>"
+        HL "<tr><td>$label</td><td class=""num"">$($sc.Findings)</td><td class=""num"">$(ConvertTo-HtmlText (Format-Money $sc.Totals))</td><td class=""num"">$(ConvertTo-HtmlText (Format-Money $sc.High))</td><td class=""num"">$($sc.New ?? '-')</td><td class=""num"">$($sc.Resolved ?? '-')</td></tr>"
+    }
+    HL '</tbody></table></div>'
+    if ($Trend.ResolvedTimed) { HL "<p>Time to resolve: median <b>$($Trend.MedianDays) day(s)</b> from first seen, over $($Trend.ResolvedTimed) resolved finding(s).</p>" }
+    if ($Trend.Oldest) {
+        HL '<p class="small">Open longest:</p><ul>'
+        foreach ($o in $Trend.Oldest) { HL "<li>$(ConvertTo-HtmlText $o.Name) ($(ConvertTo-HtmlText ($TypeInfo[[string] $o.WasteType] ?? $o.WasteType))): open $($o.Days) day(s) since $(ConvertTo-HtmlText $o.FirstSeen)</li>" }
+        HL '</ul>'
+    }
+}
 HL '<h2>Coverage</h2><div class="wrap"><table><thead><tr><th>Tenant</th><th>Scope</th><th>Subscriptions</th><th>Status</th></tr></thead><tbody>'
 foreach ($c in $coverage) { HL "<tr><td class=""small"">$(ConvertTo-HtmlText $c.Tenant)</td><td>$(ConvertTo-HtmlText $c.Scope)</td><td>$(ConvertTo-HtmlText $c.Subscriptions)</td><td>$(ConvertTo-HtmlText $c.Status)</td></tr>" }
 HL '</tbody></table></div>'

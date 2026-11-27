@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Stop'
 
 # Functions live in lib/ (dot-sourced here, so they share this script's variables). Every az call
 # still goes through Invoke-AzRead (lib/AzRead.ps1) and the allow list below.
-$LibFiles = @('Common', 'AzRead', 'Metrics', 'Pricing', 'WasteTypes' | ForEach-Object { Join-Path $PSScriptRoot "lib/$_.ps1" })
+$LibFiles = @('Common', 'AzRead', 'Metrics', 'Pricing', 'WasteTypes', 'Trends' | ForEach-Object { Join-Path $PSScriptRoot "lib/$_.ps1" })
 foreach ($lib in $LibFiles) { . $lib }
 # Waste types: one record per type in types/NN-<name>.ps1 (see lib/WasteTypes.ps1). A bad record stops here.
 $TypesDir = Join-Path $PSScriptRoot 'types'
@@ -547,6 +547,7 @@ New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutFull = (Resolve-Path $OutDir).Path
 $today = $RunTime.ToString('yyyy-MM-dd')
 $prev = $null; $prevDir = $null
+$History = [Collections.Generic.List[object]]::new()   # every earlier matching scan, oldest first (for trends)
 if ($Compare -ne 'none') {
     $candidates = if ($Compare -ne 'auto') { @(Get-Item $Compare -ErrorAction SilentlyContinue) }
                   else { @(Get-ChildItem (Split-Path -Parent $OutFull) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $OutFull }) }
@@ -559,9 +560,11 @@ if ($Compare -ne 'none') {
         if (-not $meta) { continue }
         if ($Compare -eq 'auto' -and ((Get-Key $meta 'scope') -ne $ScopeLabel -or [bool] (Get-Key $meta 'synthetic') -ne [bool] $FixtureDir)) { continue }
         if ([string] (Get-Key $meta 'generated') -ge $RunTime.ToString('o')) { continue }
-        if (-not $best -or [string] (Get-Key $meta 'generated') -gt [string] (Get-Key $best.meta 'generated')) { $best = @{ meta = $meta; json = $j; dir = $d.FullName } }
+        $History.Add(@{ meta = $meta; json = $j; dir = $d.FullName })
+        if (-not $best -or [string] (Get-Key $meta 'generated') -gt [string] (Get-Key $best.meta 'generated')) { $best = $History[-1] }
     }
     if ($best) { $prev = $best.json; $prevDir = $best.dir }
+    $History = @($History | Sort-Object { [string] (Get-Key $_.meta 'generated') })
 }
 $excludedKeys = [Collections.Generic.HashSet[string]]::new()
 foreach ($r in $rowsAll) { if ([bool] $r.ignored) { [void] $excludedKeys.Add((Get-FindingKey $r)) } }
@@ -586,5 +589,8 @@ foreach ($k in $prevByKey.Keys) {
     elseif ($unchecked) { $notRechecked += $p }
     else { $resolved += $p }
 }
+
+# Trends across every earlier scan of this scope: savings over time, time to resolve, oldest open
+$Trend = $prev ? (Get-TrendData $History) : $null
 
 . (Join-Path $PSScriptRoot 'lib/Report.ps1')

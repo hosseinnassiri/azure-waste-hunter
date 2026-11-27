@@ -57,7 +57,9 @@ cloud; regional prices cover the public cloud and US Gov.
      low-confidence findings whose advice may be "keep it"), and what share is *billed*, *advisor*
      or *estimated*
    - the top findings (around 5) by cost, with their confidence and reason
-   - what changed since the last scan (new, resolved), when the report has a comparison
+   - what changed since the last scan (new, resolved), when the report has a comparison, and the
+     trend when there are several scans (savings over time, median days to resolve, what's been
+     open longest)
    - **coverage problems first and plainly**: any tenant marked `failed`/`partial`, or any
      subscription Resource Graph couldn't see. "0 findings" from a scope that wasn't fully read is
      not a clean result. Give the fix (for example `az login --tenant <id>`).
@@ -163,6 +165,10 @@ the order between currencies is approximate.
   last scan** marks each finding new or still open (with first-seen date) and lists resolved ones.
   A finding is only "resolved" if its subscription was read and its type was really checked this
   time; otherwise it's "not rechecked".
+- **Trends** (with two or more scans of the same scope in the reports folder): one row per scan
+  (findings, estimated and high-confidence monthly, new, resolved), the median days from first seen
+  to resolved overall and per owner, and the findings open longest. Also in `trends.csv`.
+  `-Compare none` turns it off.
 
 **Reservations and savings plans** aren't readable with the allowed commands. Estimated costs on
 types they can cover (VMs, OpenAI PTU, SQL, App Service, disks) carry a † caveat that the real saving

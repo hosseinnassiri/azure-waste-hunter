@@ -63,7 +63,9 @@ expected finding set.
 3. **Scheduled-scan template**: a GitHub Actions workflow that signs in through OIDC with a
    Reader-only identity, a `-FailOnHighConfidenceAbove <amount>` exit code, a job summary, and reports
    kept as short-lived artifacts (they contain resource IDs).
-4. **Trends across N scans**: savings over time, time to resolve per owner, oldest open findings.
+4. **Trends across N scans** — done. Every earlier scan of the same scope: one row per scan (also
+   `trends.csv`), median days to resolve overall and per owner (from resolutions each scan now
+   records in `findings.json`), and the findings open longest.
 5. **Billed cost for MCA accounts** through Cost Management queries. `CLAUDE.md` allows cost
    queries, but this needs the `costmanagement` CLI extension and an allow-list addition.
 
@@ -72,4 +74,4 @@ expected finding set.
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 still need a live check once `resource-graph` is installed).
-4. Product: split the runner with one record per type (done), scheduled CI, trends, MCA billing.
+4. Product: split the runner with one record per type (done), trends (done), scheduled CI, MCA billing.

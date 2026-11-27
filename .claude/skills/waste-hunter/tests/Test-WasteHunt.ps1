@@ -454,6 +454,39 @@ try {
         Assert ($a -eq $b) 'serial and parallel runs differ'
         Assert ($r.Report -match 'Metric checks ran 1 at a time') 'report should state the parallelism'
     }
+    Test 'Trends: savings over time, time to resolve and oldest open across three scans' {
+        $parent = Join-Path $Work 'trends'
+        $now = [DateTime]::UtcNow
+        # Backdate a finished scan: its generated time, and (optionally) first-seen and resolved dates
+        $backdate = { param([string] $dir, [int] $days, [bool] $firstSeen)
+            $p = Join-Path $dir 'findings.json'; $j = Get-Content $p -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+            $j.meta.generated = $now.AddDays(-$days).ToString('o')
+            if ($firstSeen) { foreach ($f in $j.findings) { $f.firstSeen = $now.AddDays(-$days).ToString('yyyy-MM-dd') } }
+            foreach ($r in @($j.resolved)) { if ($r) { $r.resolvedOn = $now.AddDays(-$days).ToString('yyyy-MM-dd') } }
+            $j | ConvertTo-Json -Depth 8 | Set-Content $p }
+        $r1 = Invoke-Run $Fixtures 'scan1' @() $parent
+        & $backdate $r1.Dir 60 $true
+        $fx2 = Copy-Fixtures 'trends2'
+        Edit-Fixture $fx2 '03-unassociated-public-ips.json' { param($d) @($d | Where-Object { $_.name -ne 'pip-old-lb-frontend' }) }
+        $r2 = Invoke-Run $fx2 'scan2' @() $parent
+        & $backdate $r2.Dir 30 $false                     # resolved pip-old-lb-frontend 30 days after first seen
+        $fx3 = Copy-Fixtures 'trends3'
+        Edit-Fixture $fx3 '03-unassociated-public-ips.json' { param($d) @($d | Where-Object { $_.name -ne 'pip-old-lb-frontend' }) }
+        Edit-Fixture $fx3 '13-idle-load-balancers.json' { param($d) @($d | Where-Object { $_.name -ne 'lb-old-web' }) }
+        $r3 = Invoke-Run $fx3 'scan3' @() $parent          # resolves lb-old-web, 60 days after first seen
+        Assert ($r3.Report -match '## Trends') 'trends section missing'
+        Assert ($r3.Report -match '3 scan\(s\) of this scope') 'expected 3 scans'
+        Assert ($r3.Report -match "\| $($now.AddDays(-60).ToString('yyyy-MM-dd')) <sub>scan1</sub> \| \d+ \| [^|]+ \| [^|]+ \| - \| - \|") 'baseline scan row shows - for new/resolved'
+        Assert ($r3.Report -match "\| $($now.AddDays(-30).ToString('yyyy-MM-dd')) <sub>scan2</sub> \| \d+ \| [^|]+ \| [^|]+ \| 0 \| 1 \|") 'second scan: 0 new, 1 resolved'
+        Assert ($r3.Report -match '\(this scan\)\*\* \| \d+ \| [^|]+ \| [^|]+ \| 0 \| 1 \|') 'this scan: 0 new, 1 resolved'
+        Assert ($r3.Report -match 'median 45 day\(s\) from first seen to resolved, over 2 resolved finding\(s\)') 'median of 30 and 60 days'
+        Assert ($r3.Report -match 'open 60 day\(s\) since') 'oldest open findings, 60 days'
+        $csv = @(Import-Csv (Join-Path $r3.Dir 'trends.csv'))
+        Assert-Equal 3 $csv.Count 'rows in trends.csv'
+        Assert-Equal 1 @($r3.Json.resolved | Where-Object { $_ }).Count 'findings this scan resolved, recorded in findings.json'
+        Assert ($r3.Html -match '<h2>Trends</h2>') 'trends missing from the HTML'
+        Assert (-not ($r1.Report -match '## Trends')) 'a baseline scan has no trends'
+    }
     Test 'Changes: -Compare none skips the comparison' {
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')
         Assert ($r.Report -match 'this report is the baseline') '-Compare none should not compare'

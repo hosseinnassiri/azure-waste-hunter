@@ -88,6 +88,8 @@ Output goes to `reports/<timestamp>/`:
   run yourself if you decide to act, plus `status` (new/open) and `firstSeen`.
 - `by-owner/<owner>.csv`: one list per owner tag (falling back to the resource group's tag), plus
   `_no-owner.csv`.
+- **Trends** in the report and `trends.csv` once there are several scans of the same scope: savings
+  over time, median days to resolve (overall and per owner), and the findings open longest.
 - `findings.json`: the baseline the next scan compares against (`-Compare auto|<folder>|none`). A
   finding counts as **resolved** only when its subscription was read and its type was checked again.
   Otherwise it's listed as "not rechecked", so a failed query never looks like a fix.
@@ -103,7 +105,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-43 offline tests, with no Azure, no network and no dependencies:
+44 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
