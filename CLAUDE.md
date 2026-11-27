@@ -134,8 +134,8 @@ Ask the user instead.
 - Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise the real az
   stderr or exit-code handling. A fixture folder's `faults.json` injects az failures (with real az
   stderr text) to test retry and error handling offline, but check new messages against a real login.
-- Load Balancer and NAT Gateway prices are published under `armRegionName` `Global` / `US Gov`,
-  not per region.
+- Load Balancer, NAT Gateway and private endpoint prices are published under `armRegionName` `Global` /
+  `US Gov`, not per region (`Get-PriceZone`).
 - In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
   them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.
