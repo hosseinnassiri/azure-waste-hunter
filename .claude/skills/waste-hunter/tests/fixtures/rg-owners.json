@@ -1,17 +1,17 @@
 [
   {
     "subscriptionId": "22222222-2222-2222-2222-222222222222",
-    "owner": "legacy-team@example.com",
-    "resourceGroup": "rg-legacy"
+    "resourceGroup": "rg-legacy",
+    "owner": "legacy-team@example.com"
   },
   {
     "subscriptionId": "11111111-1111-1111-1111-111111111111",
-    "owner": "web@example.com",
-    "resourceGroup": "rg-web"
+    "resourceGroup": "rg-web",
+    "owner": "web@example.com"
   },
   {
     "subscriptionId": "22222222-2222-2222-2222-222222222222",
-    "owner": "sandbox@example.com",
-    "resourceGroup": "rg-sandbox"
+    "resourceGroup": "rg-sandbox",
+    "owner": "sandbox@example.com"
   }
 ]

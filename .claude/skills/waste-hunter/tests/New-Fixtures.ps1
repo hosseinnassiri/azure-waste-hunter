@@ -263,7 +263,13 @@ $bk = Row 'orphaned-vm-backup' $D 'rg-backup' 'Microsoft.RecoveryServices/vaults
     idleSource = "last backup $(Ago 75)"; sku = 'VM'; tier = 'ProtectionStopped'; extra = (Rid $D 'rg-legacy' $vm 'vm-old01').ToLower(); confidence = 'low'
     reason = 'Backups of VM vm-old01, which no longer exists (protection state ProtectionStopped). Retained recovery points keep billing backup storage' }
 $bk.name = 'rsv-dev/vm-old01'; $bk.type = 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
-Save '22-orphaned-vm-backups.json' @($bk)
+# A SQL Server database that ran on vm-old01, backed up as a workload item
+$bkDbName = 'rsv-dev/backupFabrics/Azure/protectionContainers/VMAppContainer;compute;rg-legacy;vm-old01/protectedItems/SQLDataBase;mssqlserver;billing'
+$bkDb = Row 'orphaned-workload-backup' $D 'rg-backup' 'Microsoft.RecoveryServices/vaults' $bkDbName 'eastus' @{ owner = 'platform@example.com'; env = 'dev'
+    idleSource = "last backup $(Ago 75)"; sku = 'SQLDataBase'; tier = 'ProtectionStopped'; extra = (Rid $D 'rg-legacy' $vm 'vm-old01').ToLower(); confidence = 'low'
+    reason = 'Backups of SQL Server database billing from VM vm-old01, which no longer exists (protection state ProtectionStopped). Retained recovery points keep billing backup storage' }
+$bkDb.name = 'rsv-dev/vm-old01/billing'; $bkDb.type = 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
+Save '22-orphaned-vm-backups.json' @($bk, $bkDb)
 $fwT = 'Microsoft.Network/azureFirewalls'
 function FwRow($sub, $rg, $name, $tierName, [bool] $hub, [hashtable] $x = @{}) {
     $r = Row 'idle-firewall' $sub $rg $fwT $name 'eastus' (@{ sku = $tierName; tier = ($hub ? 'hub' : 'vnet'); confidence = 'pending'; idleSource = 'pending (metrics)' } + $x)

@@ -278,7 +278,8 @@ $DerivedTypes = @{}
 foreach ($t in @($WasteTypes.Values | Where-Object { $_['Parent'] })) { $DerivedTypes[$t.Parent] = @($DerivedTypes[$t.Parent]) + $t.Name | Where-Object { $_ } }
 $QueryWasteTypes = @{}
 foreach ($qf in $queryFiles) {
-    $ts = @([regex]::Matches((Get-Content $qf.FullName -Raw), "wasteType\s*=\s*'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    # `wasteType = 'x'`, or `wasteType = iff(<cond>, 'x', 'y')` for a query that emits two types (22)
+    $ts = @([regex]::Matches((Get-Content $qf.FullName -Raw), "wasteType\s*=\s*(?:iff\([^,]*,\s*)?'([^']+)'(?:\s*,\s*'([^']+)')?") | ForEach-Object { $_.Groups[1].Value; $_.Groups[2].Value } | Where-Object { $_ } | Sort-Object -Unique)
     $QueryWasteTypes[$qf.BaseName] = @($ts + @($ts | ForEach-Object { $DerivedTypes[$_] } | Where-Object { $_ }))
 }
 $ScannedSubs     = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)

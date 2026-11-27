@@ -32,7 +32,7 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 19 | Empty resource groups | free, but clutter |
 | 20 | DDoS protection plans protecting nothing | no VNets or public IPs; the plan bills about USD 2,900/month regardless |
 | 21 | App Service plans whose apps are all stopped | stopped apps still bill their plan's instances |
-| 22 | Backups of deleted VMs | the vault keeps billing for retained recovery points (low confidence: may be the only copy) |
+| 22 | Backups of deleted VMs, and of SQL Server / SAP HANA databases on deleted VMs | the vault keeps billing for retained recovery points (low confidence: may be the only copy) |
 | 23 | Idle Azure Firewalls | 0 rule hits and under 1 GiB processed in 30 days |
 | 24 | Over-provisioned Cosmos DB throughput | provisioned RU/s whose busiest hour used under 10% of it in 30 days (saving: down to twice the peak) |
 | 25 | Idle Fabric, Synapse and Data Explorer compute | running Synapse pools and Data Explorer clusters with no connections or queries; Active Fabric capacities (low: no usage metric) |
@@ -129,7 +129,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-51 offline tests, with no Azure, no network and no dependencies:
+52 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.

@@ -40,7 +40,7 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 | ★★★ | DDoS Protection plan with no virtual networks attached — **done** (query 20) | Resource Graph | ~USD 2,900/month each |
 | ★★★ | Azure Firewall with ~0 data processed — **done** (query 23) | metric-confirmed | USD 900–1,300+/month |
 | ★★★ | App Service plan where every app is stopped — **done** (query 21) | Resource Graph | full plan price |
-| ★★ | Backup items whose source VM was deleted — **done for VMs** (query 22; databases still to do) | Resource Graph `recoveryservicesresources` | protected-instance fee + storage |
+| ★★ | Backup items whose source VM was deleted — **done** (query 22: VMs, and SQL Server / SAP HANA databases on them) | Resource Graph `recoveryservicesresources` | protected-instance fee + storage |
 | ★★ | Cosmos DB provisioned RU/s far above use — **done** (query 24, see section 5) | metric-confirmed | often hundreds/month |
 | ★★ | Idle Redis, API Management, Service Bus/Event Hubs, Synapse dedicated pools, Data Explorer, Fabric capacities — **done** (queries 25-28; Power BI Embedded not yet) | metric-confirmed | high |
 | ★ | Full (non-incremental) snapshots that could be incremental | Resource Graph | storage saving |
@@ -107,7 +107,7 @@ Everything in sections 1-5 is done or decided against. The open items:
 
 | Priority | Item | Notes |
 |---|---|---|
-| ★★ | Backups of deleted **databases** (SQL in VM, SAP HANA) | query 22 covers VMs only |
+| ~~★★~~ | ~~Backups of deleted databases (SQL in VM, SAP HANA)~~ — **done** 2026-11-27 | query 22 now also emits `orphaned-workload-backup` for database backups whose host VM is gone (checked live: the query runs). Not covered: a database dropped from a VM that still exists, which Resource Graph can't tell apart from one that's just unprotected |
 | ★★ | Memory check for oversized VMs (type 37) | the `Available Memory Bytes` platform metric would raise confidence or drop memory-bound VMs; today it's CPU only, so medium |
 | ★★ | Azure Managed Redis (`microsoft.cache/redisenterprise`) | type 26 covers Azure Cache for Redis only |
 | ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |

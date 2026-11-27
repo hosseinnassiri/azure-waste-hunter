@@ -181,7 +181,7 @@ try {
         foreach ($b in @($deny | Where-Object { $_ -like 'Bash(*)' })) { Assert ("PowerShell$($b.Substring(4))" -in $deny) "no PowerShell twin for $b" }
     }
     Test 'Types: every query has a waste-type record, and every record comes from a query, a parent check or its own Collect' {
-        $fromQueries = @($queries | ForEach-Object { [regex]::Matches((Get-Content $_.FullName -Raw), "wasteType\s*=\s*'([^']+)'") | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique)
+        $fromQueries = @($queries | ForEach-Object { [regex]::Matches((Get-Content $_.FullName -Raw), "wasteType\s*=\s*(?:iff\([^,]*,\s*)?'([^']+)'(?:\s*,\s*'([^']+)')?") | ForEach-Object { $_.Groups[1].Value; $_.Groups[2].Value } | Where-Object { $_ } } | Sort-Object -Unique)
         $recs = @(Get-ChildItem (Join-Path $SkillDir 'scripts/types') -Filter '*.ps1' | ForEach-Object { $f = $_; & $_.FullName | ForEach-Object { $_['File'] = $f.BaseName; $_ } })
         $names = @($recs | ForEach-Object { $_.Name })
         foreach ($t in $fromQueries) { Assert ($t -in $names) "query waste type '$t' has no record in scripts/types" }
@@ -194,7 +194,7 @@ try {
             }
             Assert ($r.Name -in $fromQueries) "record '$($r.Name)' ($($r.File).ps1) matches no query's wasteType"
             $q = @($queries | Where-Object { $_.BaseName -eq $r.File })
-            Assert ($q.Count -eq 1 -and (Get-Content $q[0].FullName -Raw) -match "wasteType\s*=\s*'$([regex]::Escape($r.Name))'") "record '$($r.Name)' should live in the types file named after its query ($($r.File))"
+            Assert ($q.Count -eq 1 -and (Get-Content $q[0].FullName -Raw) -match "wasteType\s*=\s*(?:iff\([^,]*,\s*)?(?:'[^']+'\s*,\s*)?'$([regex]::Escape($r.Name))'") "record '$($r.Name)' should live in the types file named after its query ($($r.File))"
         }
     }
     Test 'Types: a malformed waste-type record stops the run with the reason' {
@@ -235,7 +235,7 @@ try {
         'unassociated-public-ip|pip-vm-old01', 'unattached-disk|asrseeddisk-web01-a1b2c3', 'unattached-disk|disk-sql-data-old', 'unattached-disk|disk-temp-build',
         'vm-stopped-not-deallocated|vm-build-agent-02', 'vm-stopped-not-deallocated|vm-win-jumpbox',
         'idle-ddos-protection-plan|ddos-legacy-plan', 'stopped-app-service-plan|asp-intranet-old', 'stopped-app-service-plan|asp-free-stopped',
-        'orphaned-vm-backup|rsv-dev/vm-old01', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
+        'orphaned-vm-backup|rsv-dev/vm-old01', 'orphaned-workload-backup|rsv-dev/vm-old01/billing', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
         'overprovisioned-cosmos-db|cosmos-orders-legacy', 'overprovisioned-cosmos-db|cosmos-dev-idle',
         'idle-data-platform|fab-analytics', 'idle-data-platform|syn-ws/dw-legacy', 'idle-data-platform|adx-telemetry',
         'idle-redis-cache|redis-session-old', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused',
@@ -311,6 +311,8 @@ try {
         Assert-Equal 'high' (Get-Row $base 'vm-retired-app_OsDisk').confidence 'premium disk on a VM off 90+ days'
         Assert-Equal 'low' (Get-Row $base 'rsv-dev/vm-old01').confidence 'backup of a deleted VM (may be the only copy)'
         Assert ((Get-Row $base 'rsv-dev/vm-old01').suggestedAction -match 'Do NOT delete') 'backup of a deleted VM: action must say do not delete'
+        Assert-Equal 'low' (Get-Row $base 'rsv-dev/vm-old01/billing').confidence 'backup of a database on a deleted VM (may be the only copy)'
+        Assert ((Get-Row $base 'rsv-dev/vm-old01/billing').suggestedAction -match 'Do NOT delete') 'database backup on a deleted VM: action must say do not delete'
         Assert-Equal 'high' (Get-Row $base 'fw-hub-legacy').confidence 'firewall with no traffic'
         Assert-Equal 'medium' (Get-Row $base 'fw-dev-dnat').confidence 'firewall with some traffic but no rule hits'
         Assert-Equal 'high' (Get-Row $base 'cosmos-dev-idle').confidence 'Cosmos DB with no RU consumed'
@@ -351,6 +353,7 @@ try {
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'
         Assert-Equal '' (Get-Row $base 'log-security-archive').monthlyCost 'Log Analytics cost (must be unknown, not 0)'
         Assert-Equal '' (Get-Row $base 'rsv-dev/vm-old01').monthlyCost 'backup cost (must be unknown, not 0)'
+        Assert-Equal '' (Get-Row $base 'rsv-dev/vm-old01/billing').monthlyCost 'database backup cost (must be unknown, not 0)'
         Assert-Equal 'True' (Get-Row $base 'asp-intranet-old').commitmentCaveat 'stopped-app plan cost can be covered by a commitment'
         Assert-Equal '' (Get-Row $base 'Standard_D4s_v5 (bbbbbbbb)').monthlyCost 'reservation cost (price not readable: unknown, not 0)'
         foreach ($n in 'cosmos-orders-legacy', 'vm-dev-api', 'vm-win-app01', 'stdevlogs', 'mlw-research/batch-cluster') {
@@ -426,6 +429,17 @@ try {
         Assert ($r.Report -match 'Not rechecked this time [^|]*\| 2 \|') 'two snapshots not rechecked (failed query is not "resolved")'
         Assert-Equal 'new' (Get-Row $r 'rg-new').status 'new resource group status'
         Assert-Equal 'open' (Get-Row $r 'vm-win-jumpbox').status 'unchanged finding status'
+    }
+    Test 'Changes: a failed query that emits two waste types leaves both "not rechecked"' {
+        # Query 22 emits orphaned-vm-backup and orphaned-workload-backup through iff(); the runner must
+        # read both names from it, or a failure would report the workload backup as resolved
+        $parent = Join-Path $Work 'two-types'
+        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        $fx = Copy-Fixtures 'two-types'
+        Set-Content (Join-Path $fx '22-orphaned-vm-backups.json') 'not json'
+        $r = Invoke-Run $fx '20261108-000000' @() $parent
+        Assert ($r.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'nothing resolved by a failed query'
+        Assert ($r.Report -match 'Not rechecked this time [^|]*\| 2 \|') 'both backup findings not rechecked'
     }
     Test 'Changes: a second scan where nothing changed works (empty lists must not crash)' {
         $parent = Join-Path $Work 'stable'

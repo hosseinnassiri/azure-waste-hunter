@@ -1,5 +1,6 @@
-// waste-hunter 22 · VM backups whose source VM no longer exists
-// Deleting a VM doesn't delete its backups. The vault keeps billing the protected-instance fee (while
+// waste-hunter 22 · Backups of VMs, and of SQL Server and SAP HANA databases on VMs, whose VM no longer exists
+// Deleting a VM doesn't delete its backups, nor the backups of the databases that ran on it (workload
+// backup items, whose source is the host VM). The vault keeps billing the protected-instance fee (while
 // protection runs) and the backup storage of every retained recovery point. Only VMs whose
 // subscription is in this scan's scope are judged, so a VM outside the scope isn't taken as deleted.
 // These may be the ONLY copy of a deleted VM's data, kept on purpose, so confidence is always low.
@@ -8,9 +9,14 @@
 recoveryservicesresources
 | where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
 | where tostring(properties.backupManagementType) =~ 'AzureIaasVM'
+     or (tostring(properties.backupManagementType) =~ 'AzureWorkload' and tostring(properties.workloadType) in~ ('SQLDataBase', 'SAPHanaDatabase'))
 | extend sourceId = tolower(tostring(properties.sourceResourceId)),
          protectionState = tostring(properties.protectionState),
-         vaultId = tolower(extract(@'(?i)^(.*/vaults/[^/]+)/', 1, id))
+         vaultId = tolower(extract(@'(?i)^(.*/vaults/[^/]+)/', 1, id)),
+         isVm = tostring(properties.backupManagementType) =~ 'AzureIaasVM',
+         itemName = tostring(properties.friendlyName),
+         server = tostring(properties.serverName)
+| extend vmName = tostring(split(sourceId, '/')[8])
 | extend sourceSub = tolower(extract(@'(?i)^/subscriptions/([^/]+)/', 1, sourceId))
 | join kind=inner (
     resourcecontainers
@@ -35,11 +41,15 @@ recoveryservicesresources
          app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
          env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
          ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
-| project wasteType = 'orphaned-vm-backup', id, name = strcat(vaultName, '/', tostring(properties.friendlyName)), type, tenantId, subscriptionId, resourceGroup,
+| project wasteType = iff(isVm, 'orphaned-vm-backup', 'orphaned-workload-backup'), id,
+          name = iff(isVm or isempty(server), strcat(vaultName, '/', itemName), strcat(vaultName, '/', server, '/', itemName)), type, tenantId, subscriptionId, resourceGroup,
           location = vaultLocation, owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null),
           idleSource = strcat('last backup ', tostring(properties.lastBackupTime)),
           sku = tostring(properties.workloadType), tier = protectionState, sizeGb = int(null), os = '', extra = sourceId,
           confidence = 'low',
-          reason = strcat('Backups of VM ', tostring(properties.friendlyName), ', which no longer exists (protection state ', protectionState,
+          reason = strcat(iff(isVm, strcat('Backups of VM ', itemName, ', which no longer exists'),
+                              strcat('Backups of ', iff(tostring(properties.workloadType) =~ 'SQLDataBase', 'SQL Server', 'SAP HANA'), ' database ', itemName,
+                                     ' from VM ', vmName, ', which no longer exists')),
+                          ' (protection state ', protectionState,
                           '). Retained recovery points keep billing backup storage', iff(protectionState =~ 'Protected', ', plus the protected-instance fee', '')),
           ignored

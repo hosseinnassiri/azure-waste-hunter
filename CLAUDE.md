@@ -67,6 +67,9 @@ Ask the user instead.
   (`DisallowedMaxNumberOfRemoteTables`). Joining the main table to itself is fine. Vaults, for example, are
   also in `recoveryservicesresources`. A static test checks this, because fixtures can't.
 - Number files `NN-name.kql`. The runner runs every `queries/*.kql` in order.
+- The runner learns which waste types a query emits from its text: `wasteType = 'x'`, or
+  `wasteType = iff(<cond>, 'x', 'y')` for two (query 22). Any other expression hides the types, and a
+  failed query would then report their findings as resolved.
 - **Each waste type is a record** in `scripts/types/NN-name.ps1`, named after its query. It holds the
   label, flags (`Candidate`, `Parent`, `PartialSaving`, `CommitmentEligible`, `QuickWin`) and the `Check`,
   `LivePrice`, `Estimate` and `Action` script blocks (see the header of `lib/WasteTypes.ps1` for

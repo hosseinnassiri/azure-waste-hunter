@@ -1,12 +1,10 @@
 {
   "rg-ml/oai-research": [
     {
+      "name": "gpt-ptu-eval",
       "sku": {
         "capacity": 15,
         "name": "GlobalProvisionedManaged"
-      },
-      "systemData": {
-        "createdAt": "2026-07-30T12:04:17.1947940Z"
       },
       "properties": {
         "model": {
@@ -14,15 +12,15 @@
           "name": "gpt-4o"
         }
       },
-      "name": "gpt-ptu-eval"
+      "systemData": {
+        "createdAt": "2026-07-30T12:16:11.1717913Z"
+      }
     },
     {
+      "name": "gpt-4o-mini-support-ft",
       "sku": {
         "capacity": 1,
         "name": "Standard"
-      },
-      "systemData": {
-        "createdAt": "2026-08-29T12:04:17.1947940Z"
       },
       "properties": {
         "model": {
@@ -30,39 +28,41 @@
           "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c"
         }
       },
-      "name": "gpt-4o-mini-support-ft"
+      "systemData": {
+        "createdAt": "2026-08-29T12:16:11.1717913Z"
+      }
     },
     {
+      "name": "gpt-4o-chat",
       "sku": {
         "capacity": 50,
         "name": "GlobalStandard"
       },
-      "systemData": {
-        "createdAt": "2026-05-11T12:04:17.1947940Z"
-      },
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o"
         }
       },
-      "name": "gpt-4o-chat"
+      "systemData": {
+        "createdAt": "2026-05-11T12:16:11.1717913Z"
+      }
     },
     {
+      "name": "gpt-ptu-prod",
       "sku": {
         "capacity": 100,
         "name": "ProvisionedManaged"
       },
-      "systemData": {
-        "createdAt": "2026-01-31T12:04:17.1947940Z"
-      },
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o"
         }
       },
-      "name": "gpt-ptu-prod"
+      "systemData": {
+        "createdAt": "2026-01-31T12:16:11.1717913Z"
+      }
     }
   ]
 }
