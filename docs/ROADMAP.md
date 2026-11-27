@@ -56,8 +56,8 @@ expected finding set.
    exact `id` or wildcard `pattern`, required `reason`, optional `wasteType` and `until`. Applied before
    metric checks (no az calls for excluded candidates) and after (deployments, Hot blobs). Expired and
    unused entries are reported; a malformed file stops the scan. `excluded.csv` lists every exclusion
-   (tag or file) with its reason. **Still to do:** a `waste-hunter:ignore-until=<date>` tag, which
-   needs the same change in all 19 queries and a live check (blocked until `resource-graph` is installed).
+   (tag or file) with its reason. **Still to do:** a `waste-hunter:ignore-until=<date>` tag (see
+   section 6).
 2. **Configurable thresholds**: snapshot age (90 days), minimum age (30 days), Hot-blob size
    (100 GiB), Container Apps traffic (100 MiB).
 3. **Scheduled-scan template** — not needed (decided 2026-11-27). Scans run locally on demand, and
@@ -73,8 +73,9 @@ expected finding set.
 
 ## 5. Second round (2026-11-27)
 
-Ten suggestions from a second review, all implemented on fixtures (not yet checked against a live
-tenant that has these resource types):
+Ten suggestions from a second review, all done (commit `bb3b02a`). Every new query runs without
+errors against a live login, which caught `shards` being a reserved word (query 26). The detection
+logic is tested on fixtures only, because the author's tenant has none of these resource types:
 
 | # | Item | Where |
 |---|---|---|
@@ -90,9 +91,54 @@ tenant that has these resource types):
 | 10 | Oversized VMs: 95th percentile of hourly CPU under 5% on 4+ vCPUs (merges with Advisor's right-size recommendation) | query 37 |
 | - | Quick wins list (`QuickWin` record flag), per-owner `.md` summaries, exclusions health (gone / no longer flagged / expiring within 14 days) | report |
 
-## Order
+## 6. What's left (as of 2026-11-27)
+
+Everything in sections 1-5 is done or decided against. The open items:
+
+### Validate what was built
+
+| Item | Why it matters |
+|---|---|
+| **Live check of types 24-37 on a tenant that has those resources.** So far they only ran against fixtures and an empty tenant. Most likely to be off: metric names and grains (`ProvisionedThroughput` per database/container, `Idle Nodes` per cluster, `QueryResult` count), Resource Graph property paths (Synapse `properties.status`, Fabric `properties.state`, private endpoint connection state) and the dev/test subscription test on `quotaId` (query 35). | a wrong metric name reads as 0 traffic, which looks like idle |
+| **Reservation output schema.** Type 34 reads `reservationId`, `reservedHours`, `usedHours`, `skuName` and `totalReservedQuantity` from `az consumption reservation summary list`, and finds orders in usage records' `additionalInfo` (`ReservationOrderId`). Both are from documentation, not a real response. | a schema mismatch gives 0 rows, not an error |
+
+### New waste types and gaps in existing ones
+
+| Priority | Item | Notes |
+|---|---|---|
+| ★★ | Backups of deleted **databases** (SQL in VM, SAP HANA) | query 22 covers VMs only |
+| ★★ | Memory check for oversized VMs (type 37) | the `Available Memory Bytes` platform metric would raise confidence or drop memory-bound VMs; today it's CPU only, so medium |
+| ★★ | Azure Managed Redis (`microsoft.cache/redisenterprise`) | type 26 covers Azure Cache for Redis only |
+| ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |
+| ★ | Power BI Embedded (A SKUs) capacities left running | same pattern as Fabric (type 25) |
+| ★ | Full snapshots that could be incremental | storage saving |
+| ★ | Uniform scale set instances stopped but not deallocated | check whether `computeresources` exposes their power state |
+| ★ | Service Bus Standard, IPv6 prefixes, classic Front Door | skipped by types 27, 31 and 32 (small or differently billed) |
+
+### Features
+
+| Item | Notes |
+|---|---|
+| `waste-hunter:ignore-until=<date>` tag | the same change in all 36 queries, plus a live check |
+| Configurable thresholds | snapshot age (90 days), minimum age (30 days), Hot-blob size (100 GiB), Container Apps traffic (100 MiB), the new 10% Cosmos peak and 5% VM CPU |
+| Smaller fixtures | `metrics.json` is about 250 KB because the hourly series (ML clusters, VM CPU) need 480+ points; generating them at test time would keep the repo small |
+
+### Can't be done with the allowed commands (recorded so they aren't re-investigated)
+
+| Item | Blocker |
+|---|---|
+| Listing every reservation order | needs `az reservations` (outside the allow list), so type 34 only sees orders named in usage records or passed with `-ReservationOrder` |
+| Reservation prices | not readable, so type 34 has no cost, only the unused share of hours |
+| ML compute instances | not in Resource Graph and no idle metric |
+| Fabric capacity usage | no Azure Monitor metric (it's in the Fabric Capacity Metrics app), so type 25 reports Fabric at low confidence |
+| Billed cost on MCA accounts | decided against (section 4, item 5) |
+| Scheduled scans | not needed (section 4, item 3) |
+
+## Order (history)
 
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 checked live on 2026-11-27, which caught and fixed a Resource Graph join limit in 22).
 4. Product: split the runner with one record per type (done), trends (done); scheduled CI and MCA billing not pursued.
+5. Second round: types 24-37, quick wins, owner summaries, exclusions health (done, section 5).
+6. Next: the live validation in section 6 first, since everything after it builds on those checks being right.
