@@ -1,0 +1,41 @@
+// waste-hunter 38 · Full disk snapshots that could be incremental
+// A full snapshot stores the whole disk every time; an incremental one stores only what changed since
+// the last snapshot of that disk, always at the Standard snapshot rate. Snapshots over 90 days old are
+// left to query 06 (old snapshots), so nothing is counted twice. Flagged:
+//   - a full snapshot on Premium storage: incremental would at least move it to the Standard rate (medium)
+//   - Standard full snapshots of a disk that has two or more: all but the newest could be incremental
+//     (low: the saving is an upper bound, because the change rate isn't readable)
+// READ-ONLY. Run:  az graph query -q @38-full-snapshots.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/snapshots'
+| where not(tobool(properties.incremental))
+| extend createdTime = todatetime(properties.timeCreated)
+| where createdTime >= ago(90d)
+| extend sourceId = tolower(tostring(properties.creationData.sourceResourceId)),
+         skuName = tostring(sku.name)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.compute/snapshots'
+    | where not(tobool(properties.incremental)) and todatetime(properties.timeCreated) >= ago(90d)
+    | extend sourceId = tolower(tostring(properties.creationData.sourceResourceId))
+    | where isnotempty(sourceId)
+    | summarize fullCount = count(), newest = max(todatetime(properties.timeCreated)) by sourceId
+  ) on sourceId
+| extend premium = skuName startswith 'Premium',
+         inSeries = coalesce(fullCount, 0) >= 2 and createdTime < newest
+| where premium or inSeries
+| extend isBackup = resourceGroup startswith 'azurebackuprg' or tostring(tags) contains 'AzureBackup'
+| where not(isBackup)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'full-snapshot', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays = toint((now() - createdTime) / 1d), idleDays = int(null), idleSource = 'timeCreated',
+          sku = skuName, tier = iff(premium, 'premium', 'series'), sizeGb = toint(properties.diskSizeGB),
+          os = tostring(properties.osType), extra = sourceId,
+          confidence = iff(premium, 'medium', 'low'),
+          reason = iff(premium,
+                       strcat('Full snapshot on Premium storage (', skuName, '). An incremental snapshot is stored at the Standard rate and holds only changed data'),
+                       strcat('One of ', tostring(fullCount), ' full snapshots of the same disk in 90 days. As incremental snapshots, all but the newest would store only what changed')),
+          ignored

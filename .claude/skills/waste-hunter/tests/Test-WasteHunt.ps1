@@ -77,7 +77,7 @@ try {
                 'createdTime', 'ageDays', 'idleDays', 'idleSource', 'sku', 'tier', 'sizeGb', 'os', 'extra', 'confidence', 'reason', 'ignored'
 
     Test 'Queries: every file is marked read-only and uses the shared column set' {
-        Assert ($queries.Count -ge 36) "expected 36+ queries, found $($queries.Count)"
+        Assert ($queries.Count -ge 37) "expected 37+ queries, found $($queries.Count)"
         foreach ($q in $queries) {
             $t = Get-Content $q.FullName -Raw
             Assert ($t -match 'READ-ONLY') "$($q.Name) has no READ-ONLY note"
@@ -243,7 +243,7 @@ try {
         'orphaned-private-endpoint|pe-st-deleted', 'orphaned-private-endpoint|pe-sql-rejected', 'unused-public-ip-prefix|ippre-legacy',
         'empty-edge-profile|afd-old-site', 'empty-edge-profile|tm-unused', 'nonprod-vm-always-on|vm-dev-api',
         'underused-reservation|Standard_D4s_v5 (bbbbbbbb)', 'hybrid-benefit-not-applied|vm-win-app01', 'hybrid-benefit-not-applied|sqlsrv-erp/erp',
-        'nonprod-geo-redundant-storage|stdevlogs', 'underused-vm|vm-api-01', 'underused-vm|vm-batch-old')
+        'nonprod-geo-redundant-storage|stdevlogs', 'full-snapshot|snap-sql-daily-premium', 'full-snapshot|snap-build-weekly-03', 'underused-vm|vm-api-01', 'underused-vm|vm-batch-old')
 
     Test 'Findings: exactly the expected set (every flag and every drop is intentional)' {
         $got = @($base.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)" } | Sort-Object)
@@ -357,7 +357,7 @@ try {
                              'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
                              'adx-telemetry' = '2020.64'; 'pbi-reports' = '1465.91'; 'pbi-legacy' = '735.91'; 'redis-session-old' = '100.74'; 'amr-sessions-legacy' = '227.76'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
                              'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
-                             'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'vm-api-01' = '280.32' }
+                             'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'snap-sql-daily-premium' = '35.84'; 'snap-build-weekly-03' = '12.8'; 'vm-api-01' = '280.32' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
         Assert ((Get-Row $base 'vm-build-agent-02').costSource -like 'billed*') 'vm-build-agent-02 should use billed cost'
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'

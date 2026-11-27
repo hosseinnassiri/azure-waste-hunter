@@ -284,6 +284,16 @@ $metrics["$($fwIdle.id.ToLower())|dataprocessed"] = Set-Metrics $fwIdle.id ([ord
 $metrics["$($fwDnat.id.ToLower())|dataprocessed"] = Set-Metrics $fwDnat.id ([ordered]@{ DataProcessed = 300MB; ApplicationRuleHit = 0; NetworkRuleHit = 0 })   # flagged, medium
 $metrics["$($fwBusy.id.ToLower())|dataprocessed"] = Set-Metrics $fwBusy.id ([ordered]@{ DataProcessed = 800GB; ApplicationRuleHit = 1200000; NetworkRuleHit = 54000 })   # dropped
 
+# Full snapshots that could be incremental (rows as query 38 returns them; the newest of a series and
+# old snapshots are filtered in KQL)
+Save '38-full-snapshots.json' @(
+    (Row 'full-snapshot' $P 'rg-sql-prod' $snap 'snap-sql-daily-premium' 'eastus' @{ owner = 'data-team@example.com'; app = 'billing-db'; env = 'prod'
+        createdTime = (Ago 20); ageDays = 20; idleSource = 'timeCreated'; sku = 'Premium_LRS'; tier = 'premium'; sizeGb = 512; extra = (Rid $P 'rg-sql-prod' $disk 'disk-sql-data').ToLower()
+        confidence = 'medium'; reason = 'Full snapshot on Premium storage (Premium_LRS). An incremental snapshot is stored at the Standard rate and holds only changed data' }),
+    (Row 'full-snapshot' $D 'rg-build' $snap 'snap-build-weekly-03' 'eastus' @{ env = 'dev'
+        createdTime = (Ago 40); ageDays = 40; idleSource = 'timeCreated'; sku = 'Standard_LRS'; tier = 'series'; sizeGb = 256; extra = (Rid $D 'rg-build' $disk 'disk-build-cache').ToLower()
+        confidence = 'low'; reason = 'One of 4 full snapshots of the same disk in 90 days. As incremental snapshots, all but the newest would store only what changed' }))
+
 # ---- Phase 5: Cosmos DB, data platforms, Redis, messaging, API Management, ML clusters, private
 # endpoints, IP prefixes, edge profiles, non-prod VMs, reservations, Hybrid Benefit, geo-redundant
 # non-prod storage, oversized VMs. Each candidate type has cases it must flag and cases it must drop.
