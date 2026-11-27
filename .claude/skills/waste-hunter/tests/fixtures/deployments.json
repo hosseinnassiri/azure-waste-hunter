@@ -1,67 +1,67 @@
 {
   "rg-ml/oai-research": [
     {
-      "name": "gpt-ptu-eval",
-      "sku": {
-        "capacity": 15,
-        "name": "GlobalProvisionedManaged"
+      "systemData": {
+        "createdAt": "2026-07-30T12:29:55.2243792Z"
       },
+      "sku": {
+        "name": "GlobalProvisionedManaged",
+        "capacity": 15
+      },
+      "name": "gpt-ptu-eval",
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o"
         }
-      },
-      "systemData": {
-        "createdAt": "2026-07-30T12:16:11.1717913Z"
       }
     },
     {
-      "name": "gpt-4o-mini-support-ft",
-      "sku": {
-        "capacity": 1,
-        "name": "Standard"
+      "systemData": {
+        "createdAt": "2026-08-29T12:29:55.2243792Z"
       },
+      "sku": {
+        "name": "Standard",
+        "capacity": 1
+      },
+      "name": "gpt-4o-mini-support-ft",
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c"
         }
-      },
-      "systemData": {
-        "createdAt": "2026-08-29T12:16:11.1717913Z"
       }
     },
     {
+      "systemData": {
+        "createdAt": "2026-05-11T12:29:55.2243792Z"
+      },
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 50
+      },
       "name": "gpt-4o-chat",
-      "sku": {
-        "capacity": 50,
-        "name": "GlobalStandard"
-      },
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o"
         }
-      },
-      "systemData": {
-        "createdAt": "2026-05-11T12:16:11.1717913Z"
       }
     },
     {
-      "name": "gpt-ptu-prod",
-      "sku": {
-        "capacity": 100,
-        "name": "ProvisionedManaged"
+      "systemData": {
+        "createdAt": "2026-01-31T12:29:55.2243792Z"
       },
+      "sku": {
+        "name": "ProvisionedManaged",
+        "capacity": 100
+      },
+      "name": "gpt-ptu-prod",
       "properties": {
         "model": {
           "format": "OpenAI",
           "name": "gpt-4o"
         }
-      },
-      "systemData": {
-        "createdAt": "2026-01-31T12:16:11.1717913Z"
       }
     }
   ]

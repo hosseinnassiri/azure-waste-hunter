@@ -47,7 +47,7 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 34 | Underused reservations | under 80% of reserved hours used in 30 days (orders from usage records or `-ReservationOrder`) |
 | 35 | Azure Hybrid Benefit not applied | Windows VMs and SQL on licence-included pricing (low: a saving only if you own licences) |
 | 36 | Geo-redundant storage in non-production | GRS/GZRS accounts tagged dev/test/... holding 10 GiB or more |
-| 37 | Oversized VMs | 4+ vCPUs with hourly CPU under 5% in 95% of hours (saving: one size down) |
+| 37 | Oversized VMs | 4+ vCPUs with hourly CPU under 5% in 95% of hours, and memory that fits in half the size (saving: one size down) |
 
 Types 8–12, 16–18, 23–29, 36 and 37 start as candidates from Resource Graph and are only reported
 when 30 days of Azure Monitor metrics confirm them. Type 34 has no Resource Graph query: reservations

@@ -401,8 +401,13 @@ function BigVm($sub, $rg, $name, $size, [hashtable] $x = @{}) {
 $vmOver  = BigVm $P 'rg-api' 'vm-api-01' 'Standard_D16s_v5' @{ owner = 'api-team@example.com'; app = 'orders-api'; env = 'prod' }
 $vmBusy  = BigVm $P 'rg-api' 'vm-api-02' 'Standard_D8s_v5'
 $vmSmall = BigVm $P 'rg-api' 'vm-api-tiny' 'Standard_D2s_v5'      # 2 vCPUs: never judged
-Save '37-underused-vms.json' @($vmOver, $vmBusy, $vmSmall)
-$metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 3.5)) })
+$vmMem   = BigVm $P 'rg-api' 'vm-cache-01' 'Standard_E8s_v5'      # CPU idle, but memory-bound: dropped
+$vmNoMem = BigVm $D 'rg-build' 'vm-batch-old' 'Standard_D4s_v5' @{ env = 'dev' }   # CPU idle, no memory metric: medium
+Save '37-underused-vms.json' @($vmOver, $vmBusy, $vmSmall, $vmMem, $vmNoMem)
+# vm-api-01: memory 65-80% available (at most 35% used), so it fits in half: high
+$metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 3.5)); 'Available Memory Percentage' = @(Ts @() 'average' (Hours 480 65 80)) })
+$metrics["$($vmMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 2)); 'Available Memory Percentage' = @(Ts @() 'average' (Hours 480 25 45)) })
+$metrics["$($vmNoMem.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 2)) })
 $metrics["$($vmBusy.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 20 60)) })
 
 # Reservations: one order, found through a usage record's additionalProperties. Fields as in the CLI's schema. r1 used 30% of its hours

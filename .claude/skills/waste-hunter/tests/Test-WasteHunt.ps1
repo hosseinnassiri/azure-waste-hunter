@@ -243,7 +243,7 @@ try {
         'orphaned-private-endpoint|pe-st-deleted', 'orphaned-private-endpoint|pe-sql-rejected', 'unused-public-ip-prefix|ippre-legacy',
         'empty-edge-profile|afd-old-site', 'empty-edge-profile|tm-unused', 'nonprod-vm-always-on|vm-dev-api',
         'underused-reservation|Standard_D4s_v5 (bbbbbbbb)', 'hybrid-benefit-not-applied|vm-win-app01', 'hybrid-benefit-not-applied|sqlsrv-erp/erp',
-        'nonprod-geo-redundant-storage|stdevlogs', 'underused-vm|vm-api-01')
+        'nonprod-geo-redundant-storage|stdevlogs', 'underused-vm|vm-api-01', 'underused-vm|vm-batch-old')
 
     Test 'Findings: exactly the expected set (every flag and every drop is intentional)' {
         $got = @($base.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)" } | Sort-Object)
@@ -253,7 +253,7 @@ try {
     Test 'Metric checks: candidates that are in use are dropped, not reported' {
         foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress',
                        'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'redis-prod', 'evh-telemetry', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
-                       'vm-api-02', 'vm-api-tiny', 'Standard_E8s_v5 (cccccccc)') {
+                       'vm-api-02', 'vm-api-tiny', 'vm-cache-01', 'Standard_E8s_v5 (cccccccc)') {
             Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is in use but was reported"
         }
     }
@@ -329,13 +329,16 @@ try {
     Test 'Advisor: a right-size recommendation merges into the oversized-VM finding' {
         $v = Get-Row $base 'vm-api-01'
         Assert-Equal 'underused-vm' $v.wasteType 'vm-api-01 waste type'
-        Assert-Equal 'high' $v.confidence 'oversized VM corroborated by Advisor (medium, stepped up)'
+        Assert-Equal 'high' $v.confidence 'oversized VM whose memory fits in half the size (and Advisor agrees)'
         Assert ($v.reason -match 'corroborated by Advisor') 'reason should say corroborated by Advisor'
         Assert-Equal 'advisor' $v.costSource 'cost source'
     }
     Test 'Metric checks: thresholds are judged on the right statistic (peak, percentile, per-split minimum)' {
         Assert ((Get-Row $base 'cosmos-orders-legacy').reason -match '4,000 RU/s provisioned across 2 database/container scope\(s\).*peaked at 3\.0%.*About 800 RU/s') 'Cosmos: sum of per-container RU/s, peak normalized use, 2x-peak target'
         Assert ((Get-Row $base 'vm-api-01').reason -match 'under 3\.3% in 95% of hours') 'oversized VM: 95th percentile of hourly averages'
+        Assert ((Get-Row $base 'vm-api-01').reason -match 'memory peaked at 35% used, so it fits in half the size') 'oversized VM: worst-hour memory checked'
+        Assert-Equal 'medium' (Get-Row $base 'vm-batch-old').confidence 'oversized VM with no memory data'
+        Assert ((Get-Row $base 'vm-batch-old').reason -match 'memory is not reported') 'no memory data is said plainly'
         Assert ((Get-Row $base 'mlw-research/cpu-cluster').reason -match 'at least 2 idle node\(s\) \(8 cores\)') 'ML: per-cluster minimum idle nodes and cores'
         Assert ((Get-Row $base 'stdevlogs').reason -match '500 GiB as RA-GRS.*LRS keeps') 'storage: capacity and the target redundancy'
     }
@@ -347,7 +350,7 @@ try {
                              'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
                              'adx-telemetry' = '2020.64'; 'redis-session-old' = '100.74'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
                              'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
-                             'vm-dev-api' = '90.1'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'vm-api-01' = '280.32' }
+                             'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'vm-api-01' = '280.32' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
         Assert ((Get-Row $base 'vm-build-agent-02').costSource -like 'billed*') 'vm-build-agent-02 should use billed cost'
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'

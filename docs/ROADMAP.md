@@ -108,7 +108,7 @@ Everything in sections 1-5 is done or decided against. The open items:
 | Priority | Item | Notes |
 |---|---|---|
 | ~~★★~~ | ~~Backups of deleted databases (SQL in VM, SAP HANA)~~ — **done** 2026-11-27 | query 22 now also emits `orphaned-workload-backup` for database backups whose host VM is gone (checked live: the query runs). Not covered: a database dropped from a VM that still exists, which Resource Graph can't tell apart from one that's just unprotected |
-| ★★ | Memory check for oversized VMs (type 37) | the `Available Memory Bytes` platform metric would raise confidence or drop memory-bound VMs; today it's CPU only, so medium |
+| ~~★★~~ | ~~Memory check for oversized VMs (type 37)~~ — **done** 2026-11-27 | `Available Memory Percentage` read in the same call as CPU: over 50% used at the busiest hour is dropped (half the size wouldn't fit), 40% or less is high confidence, no data stays medium. Disk throughput, which also halves, is still not checked |
 | ★★ | Azure Managed Redis (`microsoft.cache/redisenterprise`) | type 26 covers Azure Cache for Redis only |
 | ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |
 | ★ | Power BI Embedded (A SKUs) capacities left running | same pattern as Fabric (type 25) |

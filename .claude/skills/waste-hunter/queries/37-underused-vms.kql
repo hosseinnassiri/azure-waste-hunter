@@ -1,7 +1,9 @@
 // waste-hunter 37 · Running VMs that barely use their CPUs (CANDIDATES, confirmed by metrics)
 // A running VM with 4 or more vCPUs whose hourly average CPU stayed under 5% in 95% of hours over
 // 30 days could likely run on half the vCPUs (one size down in the same family), for about half the
-// price. Memory isn't measured, so these are medium confidence. Burstable (B-series) VMs are skipped
+// price. The runner also reads Available Memory Percentage: a VM whose busiest hour used over half its
+// memory is dropped (half the size wouldn't fit); under 40% is high confidence; no memory data is
+// medium. Burstable (B-series) VMs are skipped
 // (already cheap and meant to idle), as are VMs managed by another service (Databricks, for example).
 // READ-ONLY. Run:  az graph query -q @37-underused-vms.kql --first 1000
 resources

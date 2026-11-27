@@ -117,7 +117,7 @@ and a suggested action (text only).
 | 34 | *(no query)* | reservation using under 80% of its reserved hours in 30 days, for each order found in usage records or passed with `-ReservationOrder`; cost unknown (the price isn't readable) | high under 50%; medium 50-79% |
 | 35 | `35-hybrid-benefit-not-applied.kql` | Windows VM with no licenseType; SQL VM on PAYG (Standard/Enterprise); vCore SQL database, pool or managed instance on LicenseIncluded. Dev/Test and Visual Studio subscriptions skipped | **always low**: a saving only if the user owns eligible licences |
 | 36 | `36-nonprod-geo-redundant-storage.kql` | GRS/RA-GRS/GZRS/RA-GZRS account tagged non-prod storing 10 GiB or more; saving = the redundancy price difference | medium |
-| 37 | `37-underused-vms.kql` | running VM with 4+ vCPUs (not B-series) whose hourly CPU average was under 5% in 95% of hours; saving = half (one size down) | medium (memory isn't measured); Advisor's right-size recommendation raises it |
+| 37 | `37-underused-vms.kql` | running VM with 4+ vCPUs (not B-series) whose hourly CPU average was under 5% in 95% of hours; saving = half (one size down). Dropped if the busiest hour used over 50% of memory (Available Memory Percentage) | high when memory peaked at 40% or less; medium at 40-50% or when the VM reports no memory metric; Advisor's right-size recommendation raises it |
 
 Types 8-12, 16-18, 23-29, 36 and 37 are **candidates confirmed by 30 days of metrics**. One whose metrics show use is dropped,
 not reported. Resources created under 30 days ago aren't judged. With `-SkipMetrics` these types

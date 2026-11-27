@@ -1,7 +1,7 @@
 {
+  "environmentName": "AzureCloud",
   "id": "11111111-1111-1111-1111-111111111111",
   "state": "Enabled",
-  "environmentName": "AzureCloud",
-  "tenantId": "00000000-0000-0000-0000-00000000demo",
-  "name": "demo-prod"
+  "name": "demo-prod",
+  "tenantId": "00000000-0000-0000-0000-00000000demo"
 }
