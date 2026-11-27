@@ -7,6 +7,7 @@
     Name = 'unassociated-public-ip'
     Label = 'Unassociated public IPs'
     Order = 3
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     LivePrice = {
         if ($sku -ne 'Standard' -and $f.confidence -eq 'low') { return $null }   # no charge; Get-Estimate says so
         $ipSku = ($f.tier -eq 'Global') ? 'Global' : $sku

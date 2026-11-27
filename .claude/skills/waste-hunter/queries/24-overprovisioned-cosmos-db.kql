@@ -1,0 +1,21 @@
+// waste-hunter 24 · Over-provisioned Cosmos DB throughput (CANDIDATES, confirmed by metrics)
+// Provisioned throughput (RU/s) bills every hour whether or not requests use it, in every region of
+// the account. Serverless accounts bill per request and are skipped. The runner reads the RU/s set on
+// each database and container and the peak normalized RU consumption (the busiest partition, hourly
+// maximum) over 30 days, and flags an account whose busiest hour stayed under 10% of what it pays for.
+// READ-ONLY. Run:  az graph query -q @24-overprovisioned-cosmos-db.kql --first 1000
+resources
+| where type =~ 'microsoft.documentdb/databaseaccounts'
+| where tostring(properties.capabilities) !contains 'EnableServerless'
+| extend regions = coalesce(array_length(properties.locations), 1),
+         freeTier = tobool(properties.enableFreeTier),
+         multiWrite = tobool(properties.enableMultipleWriteLocations)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'overprovisioned-cosmos-db', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(properties.databaseAccountOfferType), tier = tostring(kind), sizeGb = regions, os = '', extra = iff(freeTier, 'free tier', ''),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('regions', regions, 'freeTier', freeTier, 'multiWrite', multiWrite)

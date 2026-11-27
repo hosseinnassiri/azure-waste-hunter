@@ -7,6 +7,7 @@
     Name = 'idle-application-gateway'
     Label = 'Application Gateways with no backends'
     Order = 14
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     LivePrice = {
         $prod = @{ Standard_v2 = 'Application Gateway Standard v2'; WAF_v2 = 'Application Gateway WAF v2'; Basic = 'Application Gateway Basic v2' }[$sku]
         if (-not $prod) { return $null }   # v1 sizes: pricing.json

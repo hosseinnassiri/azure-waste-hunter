@@ -7,6 +7,7 @@
     Name = 'idle-bastion'
     Label = 'Idle Bastion hosts'
     Order = 16
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     Candidate = $true
     Check = {
         # `sessions` only supports 5- and 15-minute grains

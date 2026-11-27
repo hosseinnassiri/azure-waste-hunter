@@ -278,6 +278,143 @@ $metrics["$($fwIdle.id.ToLower())|dataprocessed"] = Set-Metrics $fwIdle.id ([ord
 $metrics["$($fwDnat.id.ToLower())|dataprocessed"] = Set-Metrics $fwDnat.id ([ordered]@{ DataProcessed = 300MB; ApplicationRuleHit = 0; NetworkRuleHit = 0 })   # flagged, medium
 $metrics["$($fwBusy.id.ToLower())|dataprocessed"] = Set-Metrics $fwBusy.id ([ordered]@{ DataProcessed = 800GB; ApplicationRuleHit = 1200000; NetworkRuleHit = 54000 })   # dropped
 
+# ---- Phase 5: Cosmos DB, data platforms, Redis, messaging, API Management, ML clusters, private
+# endpoints, IP prefixes, edge profiles, non-prod VMs, reservations, Hybrid Benefit, geo-redundant
+# non-prod storage, oversized VMs. Each candidate type has cases it must flag and cases it must drop.
+# An hourly time series: dims = @('DimName', 'value', ...), one datapoint per value, ending at $now
+function Ts([object[]] $dims, [string] $agg, [double[]] $values) {
+    $mv = @(for ($i = 0; $i -lt $dims.Count; $i += 2) { @{ name = @{ value = $dims[$i] }; value = $dims[$i + 1] } })
+    $start = $now.AddHours(-$values.Count)
+    @{ metadatavalues = $mv; data = @(for ($i = 0; $i -lt $values.Count; $i++) { @{ timeStamp = $start.AddHours($i).ToString('yyyy-MM-ddTHH:00:00Z'); $agg = $values[$i] } }) }
+}
+function MetricResp([System.Collections.IDictionary] $byMetric) { @{ value = @(foreach ($k in $byMetric.Keys) { @{ name = @{ value = $k }; timeseries = @($byMetric[$k]) } }) } }
+function Hours([int] $n, [double] $lo, [double] $hi) { @(for ($i = 0; $i -lt $n; $i++) { $lo + ($hi - $lo) * (($i * 7) % 20) / 19 }) }
+function Cand($wt, $sub, $rg, $prov, $name, $loc, [hashtable] $x, [System.Collections.IDictionary] $ci) {
+    $h = @{ confidence = 'pending'; idleSource = 'pending (metrics)' }; foreach ($k in $x.Keys) { $h[$k] = $x[$k] }
+    $r = Row $wt $sub $rg $prov $name $loc $h
+    $r.checkInputs = $ci
+    $r
+}
+
+$cdb = 'Microsoft.DocumentDB/databaseAccounts'
+$cosOld  = Cand 'overprovisioned-cosmos-db' $P 'rg-orders' $cdb 'cosmos-orders-legacy' 'eastus' @{ owner = 'orders@example.com'; app = 'orders'; env = 'prod'; sku = 'Standard'; tier = 'GlobalDocumentDB'; sizeGb = 1 } ([ordered]@{ regions = 1; freeTier = $false; multiWrite = $false })
+$cosDev  = Cand 'overprovisioned-cosmos-db' $D 'rg-api' $cdb 'cosmos-dev-idle' 'eastus' @{ env = 'dev'; sku = 'Standard'; tier = 'GlobalDocumentDB'; sizeGb = 2 } ([ordered]@{ regions = 2; freeTier = $false; multiWrite = $false })
+$cosBusy = Cand 'overprovisioned-cosmos-db' $P 'rg-api' $cdb 'cosmos-busy' 'eastus' @{ sku = 'Standard'; sizeGb = 1 } ([ordered]@{ regions = 1; freeTier = $false; multiWrite = $false })
+$cosFree = Cand 'overprovisioned-cosmos-db' $D 'rg-sandbox' $cdb 'cosmos-free' 'eastus' @{ sku = 'Standard'; sizeGb = 1; extra = 'free tier' } ([ordered]@{ regions = 1; freeTier = $true; multiWrite = $false })
+Save '24-overprovisioned-cosmos-db.json' @($cosOld, $cosDev, $cosBusy, $cosFree)
+$tpKey = { param($r) "$($r.id.ToLower())|provisionedthroughput" }; $nruKey = { param($r) "$($r.id.ToLower())|normalizedruconsumption" }
+$metrics[(& $tpKey $cosOld)]  = MetricResp ([ordered]@{ ProvisionedThroughput = @((Ts @('DatabaseName', 'orders', 'CollectionName', 'items') 'maximum' @(2000)), (Ts @('DatabaseName', 'orders', 'CollectionName', 'history') 'maximum' @(2000))) })
+$metrics[(& $nruKey $cosOld)] = MetricResp ([ordered]@{ NormalizedRUConsumption = @(Ts @() 'maximum' @(1, 3, 2)) })     # peak 3%: flagged, medium
+$metrics[(& $tpKey $cosDev)]  = MetricResp ([ordered]@{ ProvisionedThroughput = @(Ts @('DatabaseName', 'app', 'CollectionName', '__Empty') 'maximum' @(1000)) })
+$metrics[(& $nruKey $cosDev)] = MetricResp ([ordered]@{ NormalizedRUConsumption = @(Ts @() 'maximum' @(0, 0)) })          # nothing consumed: flagged, high
+$metrics[(& $tpKey $cosBusy)] = MetricResp ([ordered]@{ ProvisionedThroughput = @(Ts @('DatabaseName', 'api', 'CollectionName', 'events') 'maximum' @(10000)) })
+$metrics[(& $nruKey $cosBusy)] = MetricResp ([ordered]@{ NormalizedRUConsumption = @(Ts @() 'maximum' @(40, 65)) })       # dropped
+$metrics[(& $tpKey $cosFree)] = MetricResp ([ordered]@{ ProvisionedThroughput = @(Ts @('DatabaseName', 'try', 'CollectionName', 'c') 'maximum' @(1000)) })
+$metrics[(& $nruKey $cosFree)] = MetricResp ([ordered]@{ NormalizedRUConsumption = @(Ts @() 'maximum' @(0)) })            # all within the free 1000 RU/s: dropped
+
+$fab = Cand 'idle-data-platform' $P 'rg-bi' 'Microsoft.Fabric/capacities' 'fab-analytics' 'eastus' @{ owner = 'bi-team@example.com'; env = 'prod'; sku = 'F64'; tier = 'fabric'; sizeGb = $null; extra = 'Active' } ([ordered]@{ platform = 'fabric'; instances = $null })
+function SynPool($name, [hashtable] $x) {
+    $r = Cand 'idle-data-platform' $P 'rg-data' 'Microsoft.Synapse/workspaces' "syn-ws/sqlPools/$name" 'eastus' (@{ sku = 'DW500c'; tier = 'synapse'; extra = 'Online'; createdTime = (Ago 300); ageDays = 300 } + $x) ([ordered]@{ platform = 'synapse'; instances = $null })
+    $r.name = "syn-ws/$name"; $r.type = 'microsoft.synapse/workspaces/sqlpools'; $r
+}
+$synIdle = SynPool 'dw-legacy' @{ owner = 'data-team@example.com'; env = 'prod' }
+$synBusy = SynPool 'dw-prod' @{}
+$adx     = Cand 'idle-data-platform' $D 'rg-telemetry' 'Microsoft.Kusto/clusters' 'adx-telemetry' 'eastus' @{ env = 'dev'; sku = 'Standard_E8ads_v5'; tier = 'kusto'; sizeGb = 2; extra = 'Running' } ([ordered]@{ platform = 'kusto'; instances = 2 })
+$adxBusy = Cand 'idle-data-platform' $P 'rg-telemetry' 'Microsoft.Kusto/clusters' 'adx-busy' 'eastus' @{ sku = 'Standard_E8ads_v5'; tier = 'kusto'; sizeGb = 2; extra = 'Running' } ([ordered]@{ platform = 'kusto'; instances = 2 })
+Save '25-idle-data-platforms.json' @($fab, $synIdle, $synBusy, $adx, $adxBusy)
+$metrics["$($synIdle.id.ToLower())|connections"] = Set-Metrics $synIdle.id ([ordered]@{ Connections = 0; ActiveQueries = 0 })
+$metrics["$($synBusy.id.ToLower())|connections"] = Set-Metrics $synBusy.id ([ordered]@{ Connections = 300; ActiveQueries = 1200 })
+Set-Metric $adx.id 'IngestionVolumeInMB' 'total' @(@{ value = 5000 })       # ingests, never queried: medium
+Set-Metric $adx.id 'QueryResult' 'count' @()
+Set-Metric $adxBusy.id 'IngestionVolumeInMB' 'total' @(@{ value = 900 })
+Set-Metric $adxBusy.id 'QueryResult' 'count' @(@{ value = 4500 })
+
+$redisT = 'Microsoft.Cache/Redis'
+$rdsOld  = Cand 'idle-redis-cache' $D 'rg-web-dev' $redisT 'redis-session-old' 'eastus' @{ env = 'dev'; sku = 'C1'; tier = 'Standard'; sizeGb = 1; extra = '6.0' } ([ordered]@{ shards = 1; tier = 'Standard' })
+$rdsProd = Cand 'idle-redis-cache' $P 'rg-web' $redisT 'redis-prod' 'eastus' @{ env = 'prod'; sku = 'P1'; tier = 'Premium'; sizeGb = 1; extra = '6.0' } ([ordered]@{ shards = 1; tier = 'Premium' })
+Save '26-idle-redis-caches.json' @($rdsOld, $rdsProd)
+Set-Metric $rdsOld.id 'connectedclients' 'maximum' @()                     # no client ever: no series
+Set-Metric $rdsProd.id 'connectedclients' 'maximum' @(@{ value = 25 })
+
+$sb = Cand 'idle-messaging-namespace' $P 'rg-orders' 'Microsoft.ServiceBus/namespaces' 'sb-legacy-orders' 'eastus' @{ owner = 'orders@example.com'; env = 'prod'; sku = 'Premium'; tier = 'Service Bus'; sizeGb = 1; createdTime = (Ago 700); ageDays = 700 } ([ordered]@{ units = 1; service = 'Service Bus' })
+$evhBusy = Cand 'idle-messaging-namespace' $P 'rg-telemetry' 'Microsoft.EventHub/namespaces' 'evh-telemetry' 'eastus' @{ sku = 'Standard'; tier = 'Event Hubs'; sizeGb = 2; createdTime = (Ago 400); ageDays = 400 } ([ordered]@{ units = 2; service = 'Event Hubs' })
+$evhDev  = Cand 'idle-messaging-namespace' $D 'rg-sandbox' 'Microsoft.EventHub/namespaces' 'evh-dev-unused' 'eastus' @{ env = 'dev'; sku = 'Basic'; tier = 'Event Hubs'; sizeGb = 1; createdTime = (Ago 200); ageDays = 200 } ([ordered]@{ units = 1; service = 'Event Hubs' })
+Save '27-idle-messaging-namespaces.json' @($sb, $evhBusy, $evhDev)
+$metrics["$($sb.id.ToLower())|incomingmessages"] = Set-Metrics $sb.id ([ordered]@{ IncomingMessages = 0; OutgoingMessages = 0 })
+$metrics["$($evhBusy.id.ToLower())|incomingmessages"] = Set-Metrics $evhBusy.id ([ordered]@{ IncomingMessages = 1000000; OutgoingMessages = 990000 })
+$metrics["$($evhDev.id.ToLower())|incomingmessages"] = Set-Metrics $evhDev.id ([ordered]@{ IncomingMessages = 0; OutgoingMessages = 0 })
+
+$apimT = 'Microsoft.ApiManagement/service'
+$apimOld  = Cand 'idle-api-management' $P 'rg-api' $apimT 'apim-legacy' 'eastus' @{ owner = 'api-team@example.com'; env = 'prod'; sku = 'Developer'; tier = '1 region(s)'; sizeGb = 1; createdTime = (Ago 500); ageDays = 500 } ([ordered]@{ units = 1; regions = 1 })
+$apimProd = Cand 'idle-api-management' $P 'rg-api' $apimT 'apim-prod' 'eastus' @{ env = 'prod'; sku = 'Premium'; tier = '1 region(s)'; sizeGb = 1; createdTime = (Ago 500); ageDays = 500 } ([ordered]@{ units = 1; regions = 1 })
+Save '28-idle-api-management.json' @($apimOld, $apimProd)
+Set-Metric $apimOld.id 'Requests' 'total' @()
+Set-Metric $apimProd.id 'Requests' 'total' @(@{ value = 5000000 })
+
+$mlw = Cand 'idle-ml-compute' $D 'rg-ml' 'Microsoft.MachineLearningServices/workspaces' 'mlw-research' 'eastus' @{ owner = 'ml@example.com'; env = 'dev'; sku = 'Basic'; tier = 'Default' } ([ordered]@{ kind = 'Default' })
+Save '29-idle-ml-compute-clusters.json' @($mlw)
+# cpu-cluster: 2 idle nodes every hour, never ran a job (high). batch-cluster: 1 idle node always, runs
+# jobs (medium). gpu-train: scales to 0 between jobs (dropped).
+$metrics["$($mlw.id.ToLower())|idle nodes"] = MetricResp ([ordered]@{
+    'Idle Nodes' = @((Ts @('ClusterName', 'cpu-cluster') 'minimum' (Hours 480 2 2)), (Ts @('ClusterName', 'batch-cluster') 'minimum' (Hours 480 1 3)), (Ts @('ClusterName', 'gpu-train') 'minimum' (Hours 480 0 1)))
+    'Idle Cores' = @((Ts @('ClusterName', 'cpu-cluster') 'minimum' (Hours 480 8 8)), (Ts @('ClusterName', 'batch-cluster') 'minimum' (Hours 480 4 12)), (Ts @('ClusterName', 'gpu-train') 'minimum' (Hours 480 0 6))) })
+$metrics["$($mlw.id.ToLower())|active nodes"] = MetricResp ([ordered]@{ 'Active Nodes' = @((Ts @('ClusterName', 'cpu-cluster') 'maximum' @(0)), (Ts @('ClusterName', 'batch-cluster') 'maximum' @(6)), (Ts @('ClusterName', 'gpu-train') 'maximum' @(4))) })
+
+$peT = 'Microsoft.Network/privateEndpoints'
+Save '30-orphaned-private-endpoints.json' @(
+    (Row 'orphaned-private-endpoint' $D 'rg-legacy' $peT 'pe-st-deleted' 'eastus' (@{ env = 'dev'; tier = 'Disconnected'; extra = (Rid $D 'rg-legacy' $st 'stdeleted01')
+        reason = 'Connection to stdeleted01 is Disconnected (the target was deleted or dropped the connection), so no traffic flows, but the endpoint bills hourly' } + $unk)),
+    (Row 'orphaned-private-endpoint' $P 'rg-data' $peT 'pe-sql-rejected' 'eastus' (@{ env = 'prod'; tier = 'Rejected'; extra = (Rid $P 'rg-partner' 'Microsoft.Sql/servers' 'sql-partner'); confidence = 'medium'
+        reason = 'Connection to sql-partner was Rejected by the owner of the target, so no traffic flows, but the endpoint bills hourly' } + $unk)))
+Save '31-unused-public-ip-prefixes.json' @(
+    (Row 'unused-public-ip-prefix' $P 'rg-net' 'Microsoft.Network/publicIPPrefixes' 'ippre-legacy' 'eastus' (@{ owner = 'netops@example.com'; env = 'prod'; sku = 'Regional'; tier = '/28'; sizeGb = 16; extra = '20.10.30.0/28'
+        confidence = 'medium'; reason = 'Prefix 20.10.30.0/28 (16 addresses) has no public IP, NAT gateway or load balancer using it, but every address bills hourly' } + $unk)))
+Save '32-empty-edge-profiles.json' @(
+    (Row 'empty-edge-profile' $P 'rg-web' 'Microsoft.Cdn/profiles' 'afd-old-site' 'global' (@{ owner = 'web@example.com'; env = 'prod'; sku = 'Standard_AzureFrontDoor'; tier = 'front-door'; sizeGb = 0
+        reason = 'Standard_AzureFrontDoor profile has no endpoints, but bills its monthly base fee' } + $unk)),
+    (Row 'empty-edge-profile' $D 'rg-sandbox' 'Microsoft.Network/trafficManagerProfiles' 'tm-unused' 'global' (@{ sku = 'Traffic Manager'; tier = 'traffic-manager'; sizeGb = 0; confidence = 'low'
+        reason = 'Traffic Manager profile has no endpoints. It bills only DNS queries, so it is nearly free (clutter only)' } + $unk)))
+Save '33-nonprod-vms-always-on.json' @(
+    (Row 'nonprod-vm-always-on' $D 'rg-api' $vm 'vm-dev-api' 'eastus' @{ owner = 'api-team@example.com'; env = 'dev'; createdTime = (Ago 250); ageDays = 250; idleSource = 'not applicable (running)'
+        sku = 'Standard_D4s_v5'; tier = 'Regular'; os = 'Linux'; confidence = 'medium'
+        reason = 'Tagged env=dev and running with no auto-shutdown schedule, so it bills around the clock. Schedulers other than auto-shutdown (Automation, Start/Stop VMs v2, pipelines) are not visible here' }))
+Save '35-hybrid-benefit-not-applied.json' @(
+    (Row 'hybrid-benefit-not-applied' $P 'rg-erp' $vm 'vm-win-app01' 'eastus' @{ owner = 'erp@example.com'; env = 'prod'; idleSource = 'not applicable (in use)'; sku = 'Standard_D4s_v5'; tier = 'windows-vm'; os = 'Windows'
+        confidence = 'low'; reason = 'Windows VM pays for the Windows Server licence by the hour (Azure Hybrid Benefit is off). This is a saving only if you own eligible licences with Software Assurance or subscriptions' }),
+    ((Row 'hybrid-benefit-not-applied' $P 'rg-erp' 'Microsoft.Sql/servers' 'sqlsrv-erp/databases/erp' 'eastus' @{ owner = 'erp@example.com'; env = 'prod'; idleSource = 'not applicable (in use)'; sku = 'GP_Gen5'; tier = 'sql-db'; sizeGb = 8; os = 'GeneralPurpose'
+        confidence = 'low'; reason = 'SQL GeneralPurpose pays for the SQL Server licence by the hour (LicenseIncluded). This is a saving only if you own eligible licences with Software Assurance or subscriptions' }) | ForEach-Object { $_.name = 'sqlsrv-erp/erp'; $_.type = 'microsoft.sql/servers/databases'; $_ }))
+$stDevLogs = Cand 'nonprod-geo-redundant-storage' $D 'rg-build' $st 'stdevlogs' 'eastus' @{ env = 'dev'; sku = 'Standard_RAGRS'; tier = 'Hot'; extra = 'StorageV2'; createdTime = (Ago 400); ageDays = 400; idleSource = 'not applicable (in use)' } ([ordered]@{ accessTier = 'Hot' })
+$stDevTiny = Cand 'nonprod-geo-redundant-storage' $D 'rg-build' $st 'stdevtiny' 'eastus' @{ env = 'dev'; sku = 'Standard_GRS'; tier = 'Hot'; extra = 'StorageV2'; createdTime = (Ago 400); ageDays = 400; idleSource = 'not applicable (in use)' } ([ordered]@{ accessTier = 'Hot' })
+Save '36-nonprod-geo-redundant-storage.json' @($stDevLogs, $stDevTiny)
+Set-Metric $stDevLogs.id 'UsedCapacity' 'average' @(@{ value = 500GB })
+Set-Metric $stDevTiny.id 'UsedCapacity' 'average' @(@{ value = 2GB })    # under 10 GiB: dropped
+# vm-api-01 also has an Advisor right-size recommendation, which merges into this finding
+function BigVm($sub, $rg, $name, $size, [hashtable] $x = @{}) {
+    Cand 'underused-vm' $sub $rg $vm $name 'eastus' (@{ sku = $size; tier = 'Regular'; os = 'Linux'; createdTime = (Ago 600); ageDays = 600; idleSource = 'pending (CPU metrics)' } + $x) ([ordered]@{ vmSize = $size })
+}
+$vmOver  = BigVm $P 'rg-api' 'vm-api-01' 'Standard_D16s_v5' @{ owner = 'api-team@example.com'; app = 'orders-api'; env = 'prod' }
+$vmBusy  = BigVm $P 'rg-api' 'vm-api-02' 'Standard_D8s_v5'
+$vmSmall = BigVm $P 'rg-api' 'vm-api-tiny' 'Standard_D2s_v5'      # 2 vCPUs: never judged
+Save '37-underused-vms.json' @($vmOver, $vmBusy, $vmSmall)
+$metrics["$($vmOver.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 0.5 3.5)) })
+$metrics["$($vmBusy.id.ToLower())|percentage cpu"] = MetricResp ([ordered]@{ 'Percentage CPU' = @(Ts @() 'average' (Hours 480 20 60)) })
+
+# Reservations: one order, found through a usage record's additionalInfo. r1 used 30% of its hours
+# (flagged, high); r2 used 96% (dropped).
+$resOrder = 'aaaaaaaa-1111-2222-3333-444444444444'
+$resIds = 'bbbbbbbb-1111-2222-3333-444444444444', 'cccccccc-1111-2222-3333-444444444444'
+$resDays = foreach ($i in 1..30) {
+    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[0])"; skuName = 'Standard_D4s_v5'; kind = 'Reservation'
+       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 96; usedHours = 28.8; totalReservedQuantity = 4 }
+    @{ reservationOrderId = $resOrder; reservationId = "/providers/microsoft.capacity/reservationorders/$resOrder/reservations/$($resIds[1])"; skuName = 'Standard_E8s_v5'; kind = 'Reservation'
+       usageDate = $now.AddDays(-$i).ToString('yyyy-MM-dd'); reservedHours = 24; usedHours = 23; totalReservedQuantity = 1 }
+}
+@{ $resOrder = @($resDays) } | ConvertTo-Json -Depth 6 -Compress | Set-Content (Join-Path $Out 'reservations.json') -Encoding utf8
+
+# Exclusions health: the IDs Resource Graph finds when asked whether excluded resources still exist
+# (app-portal exists but no query returns it, so an exclusion for it matches nothing)
+Save 'exclusion-check.json' @(@{ id = (Rid $P 'rg-web' 'Microsoft.Web/sites' 'app-portal').ToLower() })
+
 # Resource group owner tags: the fallback owner for findings whose resource has no owner tag
 Save 'rg-owners.json' @(
     @{ subscriptionId = $D; resourceGroup = 'rg-legacy'; owner = 'legacy-team@example.com' },
@@ -287,12 +424,15 @@ Save 'rg-owners.json' @(
 # CPU metrics: build agent last ran 47 days ago (so the 2nd 30-day window has data); jumpbox has none
 $pts = @(for ($i = 60; $i -ge 47; $i--) { @{ timeStamp = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z'); maximum = 35.5 } })
 $metrics[$vmBuild.ToLower()] = @{ value = @(@{ timeseries = @(@{ data = $pts }) }) }
-$metrics | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $Out 'metrics.json') -Encoding utf8
+$metrics | ConvertTo-Json -Depth 12 -Compress | Set-Content (Join-Path $Out 'metrics.json') -Encoding utf8
 
 # Billed usage: 30 days for the build agent and the SQL disk, in demo-prod / demo-dev
 $usage = foreach ($i in 1..30) {
     @{ instanceId = $vmBuild; pretaxCost = 9.216; currency = 'USD'; usageStart = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') }
     @{ instanceId = (Rid $P 'rg-sql-prod' $disk 'disk-sql-data-old'); pretaxCost = 4.506; currency = 'USD'; usageStart = $now.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') }
 }
+# Reserved-instance usage names its reservation order in additionalInfo: that's how the scan finds orders
+$usage = @($usage) + @{ instanceId = $vmBuild; pretaxCost = 0; currency = 'USD'; usageStart = $now.AddDays(-1).ToString('yyyy-MM-ddT00:00:00Z')
+                        additionalInfo = "{""ReservationOrderId"":""$resOrder"",""ReservationId"":""$($resIds[0])"",""ConsumedQuantity"":24}" }
 Save 'consumption.json' @($usage)
 Write-Host "fixtures written to $Out"

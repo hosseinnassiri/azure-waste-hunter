@@ -7,6 +7,7 @@
     Name = 'idle-load-balancer'
     Label = 'Load balancers with no backends'
     Order = 13
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     LivePrice = {
         $rules = [int] ($f.sizeGb ?? 0)
         if ($rules -eq 0 -or $sku -notin 'Standard', 'Global') { return $null }

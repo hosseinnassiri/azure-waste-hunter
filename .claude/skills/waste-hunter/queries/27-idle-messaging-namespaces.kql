@@ -1,0 +1,24 @@
+// waste-hunter 27 · Idle Service Bus Premium and Event Hubs namespaces (CANDIDATES, confirmed by metrics)
+// Service Bus Premium bills per messaging unit per hour, and Event Hubs per throughput or processing
+// unit per hour, whether or not messages flow. (Service Bus Basic and Standard bill mostly per
+// operation, so they're skipped.) Event Hubs namespaces on a dedicated cluster are skipped: the
+// cluster is billed. The runner flags a namespace with 0 incoming and 0 outgoing messages in 30 days.
+// READ-ONLY. Run:  az graph query -q @27-idle-messaging-namespaces.kql --first 1000
+resources
+| where type in~ ('microsoft.servicebus/namespaces', 'microsoft.eventhub/namespaces')
+| extend tierName = tostring(sku.tier), units = coalesce(toint(sku.capacity), 1)
+| where (type =~ 'microsoft.servicebus/namespaces' and tierName =~ 'Premium')
+     or (type =~ 'microsoft.eventhub/namespaces' and tierName in~ ('Basic', 'Standard', 'Premium'))
+| where isempty(tostring(properties.clusterArmId))
+| extend service = iff(type =~ 'microsoft.servicebus/namespaces', 'Service Bus', 'Event Hubs')
+| extend createdTime = todatetime(properties.createdAt)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-messaging-namespace', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tierName, tier = service, sizeGb = units, os = '', extra = '',
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('units', units, 'service', service)

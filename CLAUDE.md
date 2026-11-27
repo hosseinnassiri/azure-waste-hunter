@@ -12,7 +12,8 @@ script under `scripts/`, so all `az` calls must still go through `Invoke-AzRead`
    - `az graph query`
    - `az monitor metrics list`
    - `az advisor recommendation list`
-   - `az consumption ...` reads and other cost *queries*
+   - `az consumption ...` reads and other cost *queries* (the runner allows `consumption usage list`
+     and `consumption reservation summary list`)
    - `az cognitiveservices account deployment list`, because Azure OpenAI deployments aren't in
      Resource Graph. Read only name, SKU, capacity, model and creation date from its output.
    - `az account show` / `az account list`, plus `az account set`, which only switches the local
@@ -44,7 +45,7 @@ Ask the user instead.
   resourceGroup, location, owner, app, env, createdTime, ageDays, idleDays, idleSource, sku, tier,
   sizeGb, os, extra, confidence, reason, ignored`. `07-advisor-cost.kql` adds `recommendationId,
   monthlySavings, currency`. The runner relies on this schema, so a new waste type must keep it.
-- Queries 08-12 return **candidates** plus a `checkInputs` object (only the fields the metric check
+- Candidate queries (08-12, 16-18, 23-29, 36, 37) return **candidates** plus a `checkInputs` object (only the fields the metric check
   needs). The runner's `Confirm-Candidate` checks 30 days of metrics and turns each candidate into
   findings or drops it as in use, so nothing is reported as idle on inventory alone. Never put env
   vars, app settings or connection strings in `checkInputs`. A candidate type must come with
@@ -60,17 +61,28 @@ Ask the user instead.
 - Run queries from files: `az graph query -q @path/to/file.kql`. Passing KQL inline through
   `az.cmd` on Windows mangles double quotes. `//` comments in `.kql` files are fine.
 - Resource Graph returns booleans as `0`/`1`.
+- Some column names are reserved in Resource Graph's KQL and fail with a bare `ParserFailure`: `shards`
+  is one (query 26 uses `shardCount`). Fixtures can't catch this, so run new queries against a login.
 - Resource Graph lets a query join a table other than its main table only once
   (`DisallowedMaxNumberOfRemoteTables`). Joining the main table to itself is fine. Vaults, for example, are
   also in `recoveryservicesresources`. A static test checks this, because fixtures can't.
 - Number files `NN-name.kql`. The runner runs every `queries/*.kql` in order.
 - **Each waste type is a record** in `scripts/types/NN-name.ps1`, named after its query. It holds the
-  label, flags (`Candidate`, `Parent`, `PartialSaving`, `CommitmentEligible`) and the `Check`,
+  label, flags (`Candidate`, `Parent`, `PartialSaving`, `CommitmentEligible`, `QuickWin`) and the `Check`,
   `LivePrice`, `Estimate` and `Action` script blocks (see the header of `lib/WasteTypes.ps1` for
   the keys and the variables each block can use). A new waste type is a query, a record, fixtures
   (`tests/New-Fixtures.ps1`) and entries in the suite's expected finding set and cost cases. Nothing
   else in the runner changes. `Import-WasteTypes` rejects unknown keys, a candidate without `Check`
   and a record without `Action`, and the tests check that every query has a record.
+- A type whose data isn't in Resource Graph has no query: its record has a `Collect` block that
+  returns rows in the shared column set, once per scan (34, reservations). It must add what it really
+  checked to `$CollectScopes[<type>]`, so an earlier finding it didn't recheck is "not rechecked",
+  never "resolved".
+- `QuickWin` only for types whose fix is reversible (deallocate, scale to zero, pause, a schedule) or
+  removes something nothing depends on. Never for data stores, backups, licences or anything that can't
+  be got back (an IP range).
+- An Action block sees only `$f`, `$who` and `$id`. Use `$f.sku`, not `$sku` (that's only set in
+  LivePrice and Estimate), or the run stops.
 
 ## Gotchas found during validation (keep these fixed)
 
@@ -104,9 +116,15 @@ Ask the user instead.
   breaks. Report metadata (`generated`, `firstSeen`) uses the real run time (`$RunTime`).
 - Billed cost is the saving only when the fix removes the whole bill. Tier changes and
   retention-only findings (`$PartialSavingTypes`, `partialSaving`) use the price difference.
-- Metric checks run in `ForEach-Object -Parallel` runspaces (`Invoke-InParallel`), which re-create
-  the functions in `$ParallelFunctions` and the variables it passes. A function a check calls must
-  be in that list. Shared state must be thread-safe (`$AzEvents`, `$MetricCache`).
+- Metric checks run in `ForEach-Object -Parallel` runspaces (`Invoke-InParallel`), which dot-source the
+  lib files and get only the variables in its `$vars` (including `$Pricing`). A variable a check reads
+  must be passed there, or it's `$null` in parallel and works only with `-Parallel 1`. Shared state
+  must be thread-safe (`$AzEvents`, `$MetricCache`).
+- `Get-MetricStats` splits by every dimension in `--filter` and keys a series by its values joined with
+  `/`; it keeps `Max`, `Min`, `Values` and per-split `BySplit`/`MaxBySplit`/`MinBySplit`/`PointsBySplit`.
+  Judge "always idle" on a per-split minimum with enough points (20+ days hourly), not on the sum.
+- Exclusions apply before metric checks, so an exclusion on a candidate that would have been dropped
+  still counts as a match. "Matched nothing" only fires for resources no query returns.
 - The runner sets `AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no` so az never prompts or installs an extension
   itself. A missing `resource-graph` extension fails the tenant with the fix in the message.
 - Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise the real az

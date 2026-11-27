@@ -1,0 +1,17 @@
+// waste-hunter 29 · Azure Machine Learning compute clusters that never scale to zero (CANDIDATES, confirmed by metrics)
+// Compute clusters aren't in Resource Graph, so this returns the workspaces and the runner reads the
+// workspace's node metrics per cluster: a cluster that had at least one idle node in every hour of
+// 30 days has its minimum node count above 0 (or never scales down), and those nodes bill like VMs.
+// Compute instances have no such metric, so they're not covered.
+// READ-ONLY. Run:  az graph query -q @29-idle-ml-compute-clusters.kql --first 1000
+resources
+| where type =~ 'microsoft.machinelearningservices/workspaces'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-ml-compute', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(sku.name), tier = tostring(kind), sizeGb = int(null), os = '', extra = '',
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('kind', tostring(kind))

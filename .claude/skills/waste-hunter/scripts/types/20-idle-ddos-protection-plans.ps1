@@ -7,6 +7,7 @@
     Name = 'idle-ddos-protection-plan'
     Label = 'DDoS protection plans protecting nothing'
     Order = 20
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     LivePrice = {
         $p = Get-MeterPrice "serviceName eq 'Azure DDOS Protection' and armRegionName eq '$rg' and skuName eq 'Network Protection'" { $_.meterName -eq 'Network Protection Plan' -and $_.unitOfMeasure -eq '1 Hour' }
         if ($null -ne $p) { return @{ Cost = $p * $hours; Note = "Network Protection plan list price, $region" } }

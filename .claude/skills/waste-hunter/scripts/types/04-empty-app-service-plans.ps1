@@ -29,6 +29,7 @@ $SharedBodies = @{
     Name = 'empty-app-service-plan'
     Label = 'Empty App Service plans'
     Order = 4
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     CommitmentEligible = $true   # a reservation or savings plan can cover it
     LivePrice = $SharedBodies.LivePrice
     Estimate = $SharedBodies.Estimate

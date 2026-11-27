@@ -77,7 +77,7 @@ try {
                 'createdTime', 'ageDays', 'idleDays', 'idleSource', 'sku', 'tier', 'sizeGb', 'os', 'extra', 'confidence', 'reason', 'ignored'
 
     Test 'Queries: every file is marked read-only and uses the shared column set' {
-        Assert ($queries.Count -ge 23) "expected 23+ queries, found $($queries.Count)"
+        Assert ($queries.Count -ge 36) "expected 36+ queries, found $($queries.Count)"
         foreach ($q in $queries) {
             $t = Get-Content $q.FullName -Raw
             Assert ($t -match 'READ-ONLY') "$($q.Name) has no READ-ONLY note"
@@ -120,7 +120,7 @@ try {
         $body = ($Matches[1] -split "`n" | ForEach-Object { $_ -replace '#.*$', '' }) -join "`n"   # comments may contain apostrophes
         $cmds = @([regex]::Matches($body, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) | Sort-Object
         $expected = @('account list', 'account set', 'account show', 'advisor recommendation list', 'cognitiveservices account deployment list',
-                      'consumption usage list', 'graph query', 'monitor metrics list') | Sort-Object
+                      'consumption reservation summary list', 'consumption usage list', 'graph query', 'monitor metrics list') | Sort-Object
         Assert-Equal ($expected -join ', ') ($cmds -join ', ') 'allowed az commands'
     }
     Test 'Guard: az is only ever invoked inside Invoke-AzRead' {
@@ -166,6 +166,7 @@ try {
             'az monitor metrics list --resource /subscriptions/0000/resourceGroups/rg-backup-restore/providers/Microsoft.Compute/virtualMachines/vm-setup --metric "Percentage CPU" --interval P1D --aggregation Maximum'
             'az advisor recommendation list --category Cost'
             'az consumption usage list --subscription 0000 --start-date 2026-10-27 --end-date 2026-11-26'
+            'az consumption reservation summary list --grain daily --reservation-order-id 0000 --start-date 2026-10-27 --end-date 2026-11-26'
             'az cognitiveservices account deployment list -g rg-ml -n oai-research --subscription 0000'
             'az account show', 'az account list --all', 'az account set --subscription 0000-1111'
             'az extension show -n resource-graph', 'az extension add -n resource-graph')     # add: local CLI change, asked first (SKILL.md)
@@ -179,13 +180,18 @@ try {
         foreach ($c in $writes) { Assert (& $blocked $c) "deny rules do not block: $c" }
         foreach ($b in @($deny | Where-Object { $_ -like 'Bash(*)' })) { Assert ("PowerShell$($b.Substring(4))" -in $deny) "no PowerShell twin for $b" }
     }
-    Test 'Types: every query has a waste-type record, and every record comes from a query or a parent check' {
+    Test 'Types: every query has a waste-type record, and every record comes from a query, a parent check or its own Collect' {
         $fromQueries = @($queries | ForEach-Object { [regex]::Matches((Get-Content $_.FullName -Raw), "wasteType\s*=\s*'([^']+)'") | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique)
         $recs = @(Get-ChildItem (Join-Path $SkillDir 'scripts/types') -Filter '*.ps1' | ForEach-Object { $f = $_; & $_.FullName | ForEach-Object { $_['File'] = $f.BaseName; $_ } })
         $names = @($recs | ForEach-Object { $_.Name })
         foreach ($t in $fromQueries) { Assert ($t -in $names) "query waste type '$t' has no record in scripts/types" }
         foreach ($r in $recs) {
             if ($r['Parent']) { Assert ($r.Parent -in $names) "$($r.Name): parent '$($r.Parent)' has no record"; continue }
+            if ($r['Collect']) {
+                Assert ($r.Name -notin $fromQueries) "record '$($r.Name)' has Collect but a query also emits it"
+                Assert (-not ($queries | Where-Object { $_.BaseName -eq $r.File })) "record '$($r.Name)' has Collect, so it must not have a query file"
+                continue
+            }
             Assert ($r.Name -in $fromQueries) "record '$($r.Name)' ($($r.File).ps1) matches no query's wasteType"
             $q = @($queries | Where-Object { $_.BaseName -eq $r.File })
             Assert ($q.Count -eq 1 -and (Get-Content $q[0].FullName -Raw) -match "wasteType\s*=\s*'$([regex]::Escape($r.Name))'") "record '$($r.Name)' should live in the types file named after its query ($($r.File))"
@@ -198,7 +204,8 @@ try {
             @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Candidate = `$true; Action = { 'a' } }" }; error = "needs a Check" }
             @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1 }" }; error = "needs an Action" }
             @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Action = { 'a' } }"; 'b.ps1' = "@{ Name = 'x'; Label = 'Y'; Order = 2; Action = { 'b' } }" }; error = "defined in both" }
-            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Parent = 'nope'; Action = { 'a' } }" }; error = "parent 'nope'" })) {
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Parent = 'nope'; Action = { 'a' } }" }; error = "parent 'nope'" }
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Candidate = `$true; Check = { }; Collect = { }; Action = { 'a' } }" }; error = "can't also be a candidate" })) {
             $dir = Join-Path $Work ("types-" + [guid]::NewGuid().ToString('N').Substring(0, 6)); New-Item -ItemType Directory $dir | Out-Null
             foreach ($k in $case.files.Keys) { Set-Content (Join-Path $dir $k) $case.files[$k] }
             $out = & pwsh -NoProfile -Command "`$ErrorActionPreference = 'Stop'; . '$lib'; try { Import-WasteTypes '$dir' | Out-Null; 'LOADED' } catch { `$_.Exception.Message }" 2>&1 | Out-String
@@ -207,7 +214,8 @@ try {
     }
     Test 'Pricing: pricing.json parses and has every section the runner reads' {
         $p = Get-Content (Join-Path $SkillDir 'scripts/pricing.json') -Raw | ConvertFrom-Json -AsHashtable
-        foreach ($k in 'disks', 'snapshotsPerGb', 'publicIps', 'appServicePlans', 'containerApps', 'storagePerGb', 'containerRegistries', 'openAI', 'network', 'sqlDatabase', 'vms') {
+        foreach ($k in 'disks', 'snapshotsPerGb', 'publicIps', 'appServicePlans', 'containerApps', 'storagePerGb', 'containerRegistries', 'openAI', 'network', 'sqlDatabase', 'vms',
+                       'cosmosDb', 'dataPlatforms', 'redisCache', 'messaging', 'apiManagement', 'machineLearning', 'licensing', 'schedules') {
             Assert ($p.ContainsKey($k)) "pricing.json has no '$k'"
         }
     }
@@ -215,7 +223,7 @@ try {
     Write-Host 'Full run on synthetic fixtures (offline pricing)'
     $base = Invoke-Run $Fixtures 'base'
     $expected = @(
-        'advisor-cost|demo-prod', 'advisor-cost|vm-api-01', 'empty-app-service-plan|asp-legacy-api', 'empty-app-service-plan|asp-playground',
+        'advisor-cost|demo-prod', 'empty-app-service-plan|asp-legacy-api', 'empty-app-service-plan|asp-playground',
         'empty-app-service-plan|asp-reports-weu', 'empty-resource-group|rg-old-poc', 'hot-blob-unread|stmediaarchive', 'idle-application-gateway|agw-legacy-portal',
         'idle-bastion|bas-dev', 'idle-container-app|ca-orders-legacy', 'idle-container-app|ca-queue-worker', 'idle-container-registry|crgraphapps',
         'idle-container-registry|crlegacybuild', 'idle-load-balancer|lb-empty-scratch', 'idle-load-balancer|lb-old-web', 'idle-network-gateway|erc-pending-dc2',
@@ -227,7 +235,15 @@ try {
         'unassociated-public-ip|pip-vm-old01', 'unattached-disk|asrseeddisk-web01-a1b2c3', 'unattached-disk|disk-sql-data-old', 'unattached-disk|disk-temp-build',
         'vm-stopped-not-deallocated|vm-build-agent-02', 'vm-stopped-not-deallocated|vm-win-jumpbox',
         'idle-ddos-protection-plan|ddos-legacy-plan', 'stopped-app-service-plan|asp-intranet-old', 'stopped-app-service-plan|asp-free-stopped',
-        'orphaned-vm-backup|rsv-dev/vm-old01', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat')
+        'orphaned-vm-backup|rsv-dev/vm-old01', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
+        'overprovisioned-cosmos-db|cosmos-orders-legacy', 'overprovisioned-cosmos-db|cosmos-dev-idle',
+        'idle-data-platform|fab-analytics', 'idle-data-platform|syn-ws/dw-legacy', 'idle-data-platform|adx-telemetry',
+        'idle-redis-cache|redis-session-old', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused',
+        'idle-api-management|apim-legacy', 'idle-ml-compute|mlw-research/cpu-cluster', 'idle-ml-compute|mlw-research/batch-cluster',
+        'orphaned-private-endpoint|pe-st-deleted', 'orphaned-private-endpoint|pe-sql-rejected', 'unused-public-ip-prefix|ippre-legacy',
+        'empty-edge-profile|afd-old-site', 'empty-edge-profile|tm-unused', 'nonprod-vm-always-on|vm-dev-api',
+        'underused-reservation|Standard_D4s_v5 (bbbbbbbb)', 'hybrid-benefit-not-applied|vm-win-app01', 'hybrid-benefit-not-applied|sqlsrv-erp/erp',
+        'nonprod-geo-redundant-storage|stdevlogs', 'underused-vm|vm-api-01')
 
     Test 'Findings: exactly the expected set (every flag and every drop is intentional)' {
         $got = @($base.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)" } | Sort-Object)
@@ -235,7 +251,9 @@ try {
         Assert (-not $missing -and -not $extra) "missing: $($missing -join ', ') | unexpected: $($extra -join ', ')"
     }
     Test 'Metric checks: candidates that are in use are dropped, not reported' {
-        foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress') {
+        foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress',
+                       'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'redis-prod', 'evh-telemetry', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
+                       'vm-api-02', 'vm-api-tiny', 'Standard_E8s_v5 (cccccccc)') {
             Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is in use but was reported"
         }
     }
@@ -295,18 +313,49 @@ try {
         Assert ((Get-Row $base 'rsv-dev/vm-old01').suggestedAction -match 'Do NOT delete') 'backup of a deleted VM: action must say do not delete'
         Assert-Equal 'high' (Get-Row $base 'fw-hub-legacy').confidence 'firewall with no traffic'
         Assert-Equal 'medium' (Get-Row $base 'fw-dev-dnat').confidence 'firewall with some traffic but no rule hits'
+        Assert-Equal 'high' (Get-Row $base 'cosmos-dev-idle').confidence 'Cosmos DB with no RU consumed'
+        Assert-Equal 'medium' (Get-Row $base 'cosmos-orders-legacy').confidence 'Cosmos DB used a little'
+        Assert-Equal 'low' (Get-Row $base 'fab-analytics').confidence 'Fabric capacity (no usage metric to confirm it)'
+        Assert-Equal 'medium' (Get-Row $base 'adx-telemetry').confidence 'Data Explorer ingesting but never queried'
+        Assert-Equal 'medium' (Get-Row $base 'mlw-research/batch-cluster').confidence 'ML cluster that runs jobs but keeps an idle node'
+        Assert-Equal 'medium' (Get-Row $base 'pe-sql-rejected').confidence 'rejected private endpoint (may be re-requested)'
+        Assert-Equal 'medium' (Get-Row $base 'ippre-legacy').confidence 'IP prefix (may be allowlisted)'
+        Assert-Equal 'low' (Get-Row $base 'tm-unused').confidence 'empty Traffic Manager profile (free)'
+        foreach ($n in 'vm-win-app01', 'sqlsrv-erp/erp') { Assert-Equal 'low' (Get-Row $base $n).confidence "$n (a saving only with licences)" }
+        Assert-Equal 'high' (Get-Row $base 'Standard_D4s_v5 (bbbbbbbb)').confidence 'reservation used 30%'
+    }
+    Test 'Advisor: a right-size recommendation merges into the oversized-VM finding' {
+        $v = Get-Row $base 'vm-api-01'
+        Assert-Equal 'underused-vm' $v.wasteType 'vm-api-01 waste type'
+        Assert-Equal 'high' $v.confidence 'oversized VM corroborated by Advisor (medium, stepped up)'
+        Assert ($v.reason -match 'corroborated by Advisor') 'reason should say corroborated by Advisor'
+        Assert-Equal 'advisor' $v.costSource 'cost source'
+    }
+    Test 'Metric checks: thresholds are judged on the right statistic (peak, percentile, per-split minimum)' {
+        Assert ((Get-Row $base 'cosmos-orders-legacy').reason -match '4,000 RU/s provisioned across 2 database/container scope\(s\).*peaked at 3\.0%.*About 800 RU/s') 'Cosmos: sum of per-container RU/s, peak normalized use, 2x-peak target'
+        Assert ((Get-Row $base 'vm-api-01').reason -match 'under 3\.3% in 95% of hours') 'oversized VM: 95th percentile of hourly averages'
+        Assert ((Get-Row $base 'mlw-research/cpu-cluster').reason -match 'at least 2 idle node\(s\) \(8 cores\)') 'ML: per-cluster minimum idle nodes and cores'
+        Assert ((Get-Row $base 'stdevlogs').reason -match '500 GiB as RA-GRS.*LRS keeps') 'storage: capacity and the target redundancy'
     }
     Test 'Costs: deterministic offline prices and billed costs' {
         $cases = [ordered]@{ 'vm-win-jumpbox' = '97.53'; 'nat-dev-unused' = '32.85'; 'sql-legacy/reporting-old' = '147.17'; 'lb-old-web' = '18.25'
                              'vm-build-agent-02' = '276.48'; 'oai-research/gpt-ptu-eval' = '10950'; 'ca-orders-legacy' = '46.66'; 'crlegacybuild' = '100'
                              'disk-sql-data-old' = '135.18'; 'asp-legacy-api' = '248.2'
-                             'ddos-legacy-plan' = '2943.55'; 'asp-intranet-old' = '219'; 'asp-free-stopped' = '0'; 'fw-hub-legacy' = '1277.5'; 'fw-dev-dnat' = '912.5' }
+                             'ddos-legacy-plan' = '2943.55'; 'asp-intranet-old' = '219'; 'asp-free-stopped' = '0'; 'fw-hub-legacy' = '1277.5'; 'fw-dev-dnat' = '912.5'
+                             'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
+                             'adx-telemetry' = '2020.64'; 'redis-session-old' = '100.74'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
+                             'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
+                             'vm-dev-api' = '90.1'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'vm-api-01' = '280.32' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
         Assert ((Get-Row $base 'vm-build-agent-02').costSource -like 'billed*') 'vm-build-agent-02 should use billed cost'
         Assert ((Get-Row $base 'asp-legacy-api').costSource -eq 'advisor') 'asp-legacy-api should use the merged Advisor figure'
         Assert-Equal '' (Get-Row $base 'log-security-archive').monthlyCost 'Log Analytics cost (must be unknown, not 0)'
         Assert-Equal '' (Get-Row $base 'rsv-dev/vm-old01').monthlyCost 'backup cost (must be unknown, not 0)'
         Assert-Equal 'True' (Get-Row $base 'asp-intranet-old').commitmentCaveat 'stopped-app plan cost can be covered by a commitment'
+        Assert-Equal '' (Get-Row $base 'Standard_D4s_v5 (bbbbbbbb)').monthlyCost 'reservation cost (price not readable: unknown, not 0)'
+        foreach ($n in 'cosmos-orders-legacy', 'vm-dev-api', 'vm-win-app01', 'stdevlogs', 'mlw-research/batch-cluster') {
+            Assert ((Get-Row $base $n).costSource -like 'estimated*') "$n is a partial saving, priced as the difference"
+        }
     }
     Test 'Advisor: a recommendation for an already-found resource is merged, not listed twice' {
         Assert (-not ($base.Rows | Where-Object { $_.wasteType -eq 'advisor-cost' -and $_.name -eq 'asp-legacy-api' })) 'asp-legacy-api appears twice'
@@ -356,7 +405,9 @@ try {
     Test 'SkipMetrics: metric-confirmed types are left out, with a warning' {
         $r = Invoke-Run $Fixtures 'skipmetrics' @('-SkipMetrics')
         $cand = 'idle-container-app', 'log-analytics-workspace', 'idle-storage-account', 'hot-blob-unread', 'idle-container-registry', 'oversized-container-registry',
-                'idle-openai-deployment', 'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm', 'idle-firewall'
+                'idle-openai-deployment', 'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm', 'idle-firewall',
+                'overprovisioned-cosmos-db', 'idle-data-platform', 'idle-redis-cache', 'idle-messaging-namespace', 'idle-api-management', 'idle-ml-compute',
+                'nonprod-geo-redundant-storage', 'underused-vm'
         Assert (-not ($r.Rows | Where-Object { $_.wasteType -in $cand })) 'candidate types must be absent'
         Assert ($r.Report -match 'not checked because of -SkipMetrics') 'missing -SkipMetrics warning'
     }
@@ -538,6 +589,57 @@ try {
         $after = [DateTime]::UtcNow.ToString('yyyy-MM-dd')                # the run may cross midnight
         Assert-Equal '57' (Get-Row $r 'vm-build-agent-02').idleDays 'idle days 10 days after the fixture clock'
         Assert ($r.Report -match "Generated ($before|$after)") 'report timestamp must be the real run time, not the fixture clock'
+    }
+    Test 'Quick wins: high-confidence, reversible or dependency-free findings only, most costly first' {
+        Assert ($base.Report -match '(?s)## Quick wins: [\d,.]+ USD/month(.*?)\n## ') 'Quick wins section missing'
+        $qw = $Matches[1]
+        foreach ($n in 'ddos-legacy-plan', 'afd-old-site', 'syn-ws/dw-legacy', 'mlw-research/cpu-cluster', 'cosmos-dev-idle') { Assert ($qw -match [regex]::Escape("[$n]")) "$n should be a quick win" }
+        foreach ($n in 'stmediaarchive', 'disk-sql-data-old', 'rsv-dev/vm-old01', 'redis-session-old', 'sb-legacy-orders', 'pe-sql-rejected', 'fab-analytics', 'tm-unused', 'vm-dev-api') {
+            Assert ($qw -notmatch [regex]::Escape("[$n]")) "$n must not be a quick win (data store, dependency, not high confidence, or free)"
+        }
+        Assert-Equal 15 ([regex]::Matches($qw, '(?m)^\| \[')).Count 'quick wins are capped at 15'
+        Assert ($qw.IndexOf('[syn-ws/dw-legacy]') -lt $qw.IndexOf('[afd-old-site]')) 'quick wins should be ordered by cost'
+        Assert ($base.Html -match '<h2>Quick wins: ') 'quick wins missing from the HTML'
+    }
+    Test 'Owners: each owner also gets a short markdown summary to paste' {
+        $md = @(Get-ChildItem (Join-Path $base.Dir 'by-owner') -Filter '*.md')
+        $csv = @(Get-ChildItem (Join-Path $base.Dir 'by-owner') -Filter '*.csv')
+        Assert-Equal $csv.Count $md.Count 'one summary per owner CSV'
+        $t = Get-Content (Join-Path $base.Dir 'by-owner/api-team@example.com.md') -Raw
+        Assert ($t -match '# Azure cleanup candidates for api-team@example\.com') 'summary title'
+        Assert ($t -match 'nothing in Azure was changed') 'summary says nothing was changed'
+        foreach ($n in 'vm-api-01', 'asp-legacy-api', 'vm-dev-api', 'apim-legacy') { Assert ($t -match [regex]::Escape("**$n**")) "summary should list $n" }
+        Assert ($t.IndexOf('**vm-api-01**') -lt $t.IndexOf('**apim-legacy**')) 'summary sorted by cost'
+    }
+    Test 'Reservations: orders found in usage records are checked; bad or unreadable orders are reported, never "resolved"' {
+        Assert ($base.Report -match 'Reservation orders checked: 1 ') 'the order in the usage record should be found and checked'
+        Assert ((Get-Row $base 'Standard_D4s_v5 (bbbbbbbb)').reason -match 'Used 30% of its reserved hours') 'utilization from reserved vs used hours'
+        $log = & pwsh -NoProfile -File $Runner -FixtureDir $Fixtures -OfflinePricing -OutDir (Join-Path $Work 'res-bad') -ReservationOrder 'not-a-guid' 2>&1 | Out-String
+        Assert ($LASTEXITCODE -eq 2 -and $log -match 'is not a reservation order ID') "a malformed -ReservationOrder must stop the run: $log"
+        $r = Invoke-Run $Fixtures 'res-unknown' @('-ReservationOrder', 'dddddddd-1111-2222-3333-444444444444')
+        Assert ($r.Report -match "Couldn't read the utilization of reservation order dddddddd-") 'an unreadable order should be a warning'
+        Assert ($r.Report -match 'Reservation orders checked: 2 ') 'both orders tried'
+        # A later scan that doesn't see the order (no usage read) must not call its finding resolved
+        $parent = Join-Path $Work 'res-history'
+        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        $r2 = Invoke-Run $Fixtures '20261108-000000' @('-SkipConsumption') $parent
+        Assert ($r2.Report -match 'Reservation orders checked: 0 ') 'no usage read, so no order found'
+        Assert ($r2.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'an unchecked reservation is not resolved'
+        Assert ($r2.Report -match 'Not rechecked this time [^|]*\| 1 \|') 'the reservation finding is not rechecked'
+    }
+    Test 'Exclusions health: gone resources, resources no longer flagged, and entries about to expire' {
+        $clock = [DateTime]::Parse((Get-Content (Join-Path $Fixtures 'clock.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String)['now'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+        $excl = Join-Path $Work 'excl-health.json'
+        @{ exclusions = @(
+            @{ id = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-portal'; reason = 'old hold' }   # exists, not flagged
+            @{ id = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-legacy/providers/Microsoft.Compute/disks/disk-gone'; reason = 'old hold' }       # gone
+            @{ id = (Get-Row $base 'afd-old-site').resourceId; reason = 'launch in December'; until = $clock.AddDays(5).ToString('yyyy-MM-dd') }) } |                     # expires soon
+            ConvertTo-Json -Depth 5 | Set-Content $excl
+        $r = Invoke-Run $Fixtures 'excl-health' @('-ExclusionsFile', $excl)
+        Assert ($r.Report -match "app-portal' matched nothing in this scan: the resource still exists but isn't flagged any more") 'exists but not flagged'
+        Assert ($r.Report -match "disk-gone' matched nothing in this scan: the resource no longer exists") 'resource gone'
+        Assert ($r.Report -match "afd-old-site' expires on $($clock.AddDays(5).ToString('yyyy-MM-dd')), in [45] day\(s\) \(launch in December\)") 'expiring soon'
+        Assert (-not ($r.Rows | Where-Object { $_.name -eq 'afd-old-site' })) 'still excluded until it expires'
     }
     Test 'Output safety: HTML-escapes and neutralizes CSV formulas in tag values' {
         $fx = Copy-Fixtures 'hostile'

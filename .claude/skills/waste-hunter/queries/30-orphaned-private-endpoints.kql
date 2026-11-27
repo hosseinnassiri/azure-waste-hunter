@@ -1,0 +1,24 @@
+// waste-hunter 30 · Private endpoints whose target is gone or refused the connection
+// A private endpoint bills hourly (about USD 7.30/month) plus data, connected or not. Its connection
+// state turns Disconnected when the target resource (a storage account, a database...) is deleted or
+// removes the connection, and Rejected when the target's owner refuses it. Either way no traffic flows.
+// READ-ONLY. Run:  az graph query -q @30-orphaned-private-endpoints.kql --first 1000
+resources
+| where type =~ 'microsoft.network/privateendpoints'
+| extend conn = iff(array_length(properties.privateLinkServiceConnections) > 0, properties.privateLinkServiceConnections[0], properties.manualPrivateLinkServiceConnections[0])
+| extend status = tostring(conn.properties.privateLinkServiceConnectionState.status),
+         target = tostring(conn.properties.privateLinkServiceId)
+| where status in~ ('Disconnected', 'Rejected')
+| extend targetName = iff(isempty(target), 'its target', tostring(split(target, '/')[8]))
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'orphaned-private-endpoint', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = '', tier = status, sizeGb = int(null), os = '', extra = target,
+          confidence = iff(status =~ 'Disconnected', 'high', 'medium'),
+          reason = iff(status =~ 'Disconnected',
+                       strcat('Connection to ', targetName, ' is Disconnected (the target was deleted or dropped the connection), so no traffic flows, but the endpoint bills hourly'),
+                       strcat('Connection to ', targetName, ' was Rejected by the owner of the target, so no traffic flows, but the endpoint bills hourly')),
+          ignored

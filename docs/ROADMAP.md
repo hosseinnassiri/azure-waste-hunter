@@ -41,11 +41,11 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 | ★★★ | Azure Firewall with ~0 data processed — **done** (query 23) | metric-confirmed | USD 900–1,300+/month |
 | ★★★ | App Service plan where every app is stopped — **done** (query 21) | Resource Graph | full plan price |
 | ★★ | Backup items whose source VM was deleted — **done for VMs** (query 22; databases still to do) | Resource Graph `recoveryservicesresources` | protected-instance fee + storage |
-| ★★ | Cosmos DB provisioned RU/s with ~0 requests | metric `TotalRequests` | often hundreds/month |
-| ★★ | Idle Redis, API Management, Service Bus/Event Hubs Premium, Synapse dedicated pools, Fabric/Power BI Embedded capacities | metric-confirmed | high |
+| ★★ | Cosmos DB provisioned RU/s far above use — **done** (query 24, see section 5) | metric-confirmed | often hundreds/month |
+| ★★ | Idle Redis, API Management, Service Bus/Event Hubs, Synapse dedicated pools, Data Explorer, Fabric capacities — **done** (queries 25-28; Power BI Embedded not yet) | metric-confirmed | high |
 | ★ | Full (non-incremental) snapshots that could be incremental | Resource Graph | storage saving |
 | ★ | Uniform scale set instances stopped but not deallocated (known limitation) | check whether `computeresources` exposes their power state | |
-| ? | Underused reservations | `az consumption reservation summary` is a consumption read, but needs a reservation order ID; listing orders probably needs a command outside the allowed list (user decision) | |
+| ★★ | Underused reservations — **done** (type 34, no query) | `az consumption reservation summary list`, for orders found in usage records or passed with `-ReservationOrder` (listing every order would need a command outside the allowed list) | the unused share of the commitment |
 
 Each new type needs fixture cases it must flag, cases it must drop, and an entry in the suite's
 expected finding set.
@@ -70,6 +70,25 @@ expected finding set.
    The remaining routes each need a new exception to the read-only rules: a narrow `az rest` POST to
    `Microsoft.CostManagement/query`, pinning an old unmaintained extension, or the Az PowerShell
    module with a second login. Decision: keep the current fallback (warn, then Advisor or list prices).
+
+## 5. Second round (2026-11-27)
+
+Ten suggestions from a second review, all implemented on fixtures (not yet checked against a live
+tenant that has these resource types):
+
+| # | Item | Where |
+|---|---|---|
+| 1 | Over-provisioned Cosmos DB throughput: RU/s summed per database and container, peak normalized use under 10%, saving down to twice the peak | query 24 |
+| 2 | Data platforms left running: Synapse dedicated pools, Data Explorer clusters; Fabric capacities at low confidence (no Azure Monitor usage metric) | query 25 |
+| 3 | Idle Redis caches, Service Bus Premium and Event Hubs namespaces, API Management | queries 26-28 |
+| 4 | ML compute clusters that never scale to zero, from workspace node metrics per cluster. Compute instances aren't in Resource Graph and have no idle metric, so they're not covered | query 29 |
+| 5 | Private endpoints with a Disconnected or Rejected connection; unused public IP prefixes; Front Door profiles with no endpoints (and empty Traffic Manager profiles, free) | queries 30-32 |
+| 6 | Non-prod VMs running with no auto-shutdown schedule (saving: off outside 07:00-19:00 weekdays) | query 33 |
+| 7 | Underused reservations, with one new read on the allow list (`consumption reservation summary list`) and a new record kind, `Collect`, for types with no Resource Graph query | type 34 |
+| 8 | Azure Hybrid Benefit not applied (Windows VMs, SQL VMs, vCore SQL), always low confidence, Dev/Test subscriptions skipped | query 35 |
+| 9 | Geo-redundant storage in non-prod (GRS/GZRS to LRS/ZRS). Zone-redundant SQL in non-prod wasn't added: its price difference isn't a single meter | query 36 |
+| 10 | Oversized VMs: 95th percentile of hourly CPU under 5% on 4+ vCPUs (merges with Advisor's right-size recommendation) | query 37 |
+| - | Quick wins list (`QuickWin` record flag), per-owner `.md` summaries, exclusions health (gone / no longer flagged / expiring within 14 days) | report |
 
 ## Order
 

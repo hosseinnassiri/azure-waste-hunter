@@ -1,0 +1,19 @@
+// waste-hunter 26 · Idle Azure Cache for Redis (CANDIDATES, confirmed by metrics)
+// A cache bills every hour it exists. The runner flags one that had no connected clients at any point
+// in 30 days. Azure Managed Redis (redisenterprise) is not covered.
+// READ-ONLY. Run:  az graph query -q @26-idle-redis-caches.kql --first 1000
+resources
+| where type =~ 'microsoft.cache/redis'
+| where tostring(properties.provisioningState) =~ 'Succeeded'
+| extend tierName = tostring(properties.sku.name),
+         size = strcat(tostring(properties.sku.family), tostring(properties.sku.capacity)),
+         shardCount = iff(toint(properties.shardCount) > 0, toint(properties.shardCount), 1)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-redis-cache', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = size, tier = tierName, sizeGb = shardCount, os = '', extra = tostring(properties.redisVersion),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('shards', shardCount, 'tier', tierName)

@@ -82,7 +82,57 @@
                           "ErGw1AZ": 0.361, "ErGw2AZ": 0.632, "ErGw3AZ": 2.151 },
     "bastionPerHour": { "Basic": 0.19, "Standard": 0.29, "Premium": 0.45, "StandardAdditional": 0.14, "PremiumAdditional": 0.22 },
     "ddosPlanPerHour": 4.032258,
-    "firewallPerHour": { "Basic": 0.395, "Standard": 1.25, "Premium": 1.75 }
+    "firewallPerHour": { "Basic": 0.395, "Standard": 1.25, "Premium": 1.75 },
+    "privateEndpointPerHour": 0.01,
+    "ipPrefixPerIpHour": { "Standard": 0.006, "Global": 0.012 },
+    "frontDoorBasePerMonth": { "Standard_AzureFrontDoor": 35, "Premium_AzureFrontDoor": 330 }
+  },
+
+  "cosmosDb": {
+    "_about": "Provisioned (manual) throughput per 100 RU/s per hour, per region. Autoscale bills up to 1.5x; multi-region writes cost more.",
+    "per100RuHour": 0.008,
+    "freeTierRu": 1000
+  },
+
+  "dataPlatforms": {
+    "_about": "Fabric: per capacity unit (F64 = 64 CU) per hour. Synapse dedicated SQL pool: per 100 DWU per hour. Data Explorer: markup per vCPU-hour on top of the VM price.",
+    "fabricPerCuHour": 0.18,
+    "synapsePer100DwuHour": 1.51,
+    "dataExplorerMarkupPerVcpuHour": 0.11
+  },
+
+  "redisCache": {
+    "_about": "Azure Cache for Redis per cache per hour (Premium per shard).",
+    "Basic":    { "C0": 0.022, "C1": 0.055, "C2": 0.09, "C3": 0.18, "C4": 0.21, "C5": 0.42, "C6": 0.84 },
+    "Standard": { "C0": 0.055, "C1": 0.138, "C2": 0.225, "C3": 0.45, "C4": 0.525, "C5": 1.05, "C6": 2.1 },
+    "Premium":  { "P1": 0.555, "P2": 1.11, "P3": 2.219, "P4": 4.44, "P5": 10.05 }
+  },
+
+  "messaging": {
+    "_about": "Per unit per hour: Service Bus Premium messaging unit, Event Hubs throughput unit (Basic, Standard) or processing unit (Premium).",
+    "serviceBusPremiumPerMuHour": 0.9275,
+    "eventHubsPerUnitHour": { "Basic": 0.015, "Standard": 0.03, "Premium": 1.027 }
+  },
+
+  "apiManagement": {
+    "_about": "Per unit per hour.",
+    "perUnitHour": { "Developer": 0.0658, "Basic": 0.2016, "Standard": 0.9407, "Premium": 3.829, "Isolated": 21.77,
+                     "BasicV2": 0.20548, "StandardV2": 0.9589, "PremiumV2": 3.83562 }
+  },
+
+  "machineLearning": {
+    "_about": "Compute clusters report idle cores, not their VM size, so idle cores are priced at the default per-vCPU VM rate. GPU nodes cost far more.",
+    "perIdleCoreHour": 0.05
+  },
+
+  "licensing": {
+    "_about": "The licence part of a pay-as-you-go price, which Azure Hybrid Benefit removes. Windows Server uses vms.windowsPerVcpuHour. SQL per vCore-hour (approximate).",
+    "sqlPerVcoreHour": { "GeneralPurpose": 0.1006, "Hyperscale": 0.1006, "BusinessCritical": 0.269, "Standard": 0.1, "Enterprise": 0.375 }
+  },
+
+  "schedules": {
+    "_about": "Share of the week a non-prod VM can be off with a 07:00-19:00 weekday schedule: (5 x 12 + 48) / 168 hours.",
+    "offHoursFraction": 0.642857
   },
 
   "sqlDatabase": {

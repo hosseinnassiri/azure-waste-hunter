@@ -10,6 +10,10 @@
 #   Parent              a type emitted by another type's Check (hot-blob-unread from idle-storage-account)
 #   PartialSaving       the saving is a price difference, so billed cost is never used as the saving
 #   CommitmentEligible  a reservation or savings plan can cover it (estimated costs get the caveat)
+#   QuickWin            the fix is reversible or removes something nothing depends on, so a high-confidence
+#                       finding of this type is listed under "Quick wins"
+#   Collect             a type with no Resource Graph query: returns its rows (the shared column set)
+#                       from other allowed reads, once per scan. Reservations use it.
 #   Check               candidates only: 0..n findings from New-FindingFrom, or none when in use
 #   LivePrice           @{ Cost; Note } from the Retail Prices API, or $null to fall back
 #   Estimate            @{ Cost; Note } from pricing.json ($null Cost = unknown)
@@ -18,7 +22,7 @@
 # resolves variables through the caller's scopes): $r, $ci, $young in Check; $f, $sku, $region, $rg,
 # $red, $hours in LivePrice; $f, $sku in Estimate; $f, $who, $id in Action.
 
-$WasteTypeKeys = @('Name', 'Label', 'Order', 'Candidate', 'Parent', 'PartialSaving', 'CommitmentEligible', 'Check', 'LivePrice', 'Estimate', 'Action')
+$WasteTypeKeys = @('Name', 'Label', 'Order', 'Candidate', 'Parent', 'PartialSaving', 'CommitmentEligible', 'QuickWin', 'Collect', 'Check', 'LivePrice', 'Estimate', 'Action')
 
 # Loads and validates every record, ordered for the report. A malformed record stops the run.
 function Import-WasteTypes([string] $Dir) {
@@ -28,8 +32,9 @@ function Import-WasteTypes([string] $Dir) {
             if (-not ($rec -is [hashtable])) { throw "$($file.Name): a waste-type file must return hashtables, got $($rec.GetType().Name)" }
             foreach ($k in $rec.Keys) { if ($k -notin $WasteTypeKeys) { throw "$($file.Name): unknown key '$k' in waste type '$($rec['Name'])'" } }
             foreach ($k in 'Name', 'Label', 'Order') { if (-not $rec[$k]) { throw "$($file.Name): waste type needs '$k'" } }
-            foreach ($k in 'Check', 'LivePrice', 'Estimate', 'Action') { if ($rec.ContainsKey($k) -and -not ($rec[$k] -is [scriptblock])) { throw "$($file.Name): '$k' of '$($rec.Name)' must be a script block" } }
+            foreach ($k in 'Check', 'LivePrice', 'Estimate', 'Action', 'Collect') { if ($rec.ContainsKey($k) -and -not ($rec[$k] -is [scriptblock])) { throw "$($file.Name): '$k' of '$($rec.Name)' must be a script block" } }
             if ($rec['Candidate'] -and -not $rec['Check']) { throw "$($file.Name): candidate type '$($rec.Name)' needs a Check" }
+            if ($rec['Collect'] -and ($rec['Candidate'] -or $rec['Parent'])) { throw "$($file.Name): '$($rec.Name)' has Collect, so it can't also be a candidate or have a parent" }
             if (-not $rec['Action']) { throw "$($file.Name): waste type '$($rec.Name)' needs an Action" }
             $rec['File'] = $file.Name
             $all.Add($rec)
@@ -44,7 +49,7 @@ function Import-WasteTypes([string] $Dir) {
     return $types
 }
 
-# Metric-confirmed candidates (queries 08-12, 16-18, 23): each query row becomes 0..n findings, or
+# Metric-confirmed candidates (records with Candidate): each query row becomes 0..n findings, or
 # none when the metrics show it's in use.
 function Confirm-Candidate($r) {
     $ci = (Get-Key $r 'checkInputs') ?? @{}

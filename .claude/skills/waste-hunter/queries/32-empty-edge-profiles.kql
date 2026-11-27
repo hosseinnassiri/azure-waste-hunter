@@ -1,0 +1,32 @@
+// waste-hunter 32 · Front Door and Traffic Manager profiles with no endpoints
+// An Azure Front Door Standard or Premium profile bills a monthly base fee (USD 35 or 330) even with
+// no endpoints. A Traffic Manager profile with no endpoints bills only DNS queries, so it's nearly
+// free (low confidence, clutter only). Classic CDN profiles have no base fee and are skipped.
+// READ-ONLY. Run:  az graph query -q @32-empty-edge-profiles.kql --first 1000
+resources
+| where type =~ 'microsoft.cdn/profiles' and tostring(sku.name) in~ ('Standard_AzureFrontDoor', 'Premium_AzureFrontDoor')
+| extend pid = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.cdn/profiles/afdendpoints'
+    | summarize endpoints = count() by pid = tolower(substring(id, 0, indexof(tolower(id), '/afdendpoints/')))
+  ) on pid
+| extend endpoints = coalesce(endpoints, 0), edge = 'front-door', skuName = tostring(sku.name)
+| where endpoints == 0
+| union (
+    resources
+    | where type =~ 'microsoft.network/trafficmanagerprofiles'
+    | extend endpoints = coalesce(array_length(properties.endpoints), 0), edge = 'traffic-manager', skuName = 'Traffic Manager'
+    | where endpoints == 0
+  )
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'empty-edge-profile', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'unknown (not exposed by Resource Graph)',
+          sku = skuName, tier = edge, sizeGb = 0, os = '', extra = '',
+          confidence = iff(edge == 'front-door', 'high', 'low'),
+          reason = iff(edge == 'front-door', strcat(skuName, ' profile has no endpoints, but bills its monthly base fee'),
+                       'Traffic Manager profile has no endpoints. It bills only DNS queries, so it is nearly free (clutter only)'),
+          ignored

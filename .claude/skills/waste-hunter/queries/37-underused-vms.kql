@@ -1,0 +1,24 @@
+// waste-hunter 37 · Running VMs that barely use their CPUs (CANDIDATES, confirmed by metrics)
+// A running VM with 4 or more vCPUs whose hourly average CPU stayed under 5% in 95% of hours over
+// 30 days could likely run on half the vCPUs (one size down in the same family), for about half the
+// price. Memory isn't measured, so these are medium confidence. Burstable (B-series) VMs are skipped
+// (already cheap and meant to idle), as are VMs managed by another service (Databricks, for example).
+// READ-ONLY. Run:  az graph query -q @37-underused-vms.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| where tostring(properties.extended.instanceView.powerState.code) =~ 'PowerState/running'
+| where isempty(managedBy) and resourceGroup !startswith 'databricks-rg'
+| extend vmSize = tostring(properties.hardwareProfile.vmSize)
+| where vmSize !startswith 'Standard_B'
+| extend createdTime = todatetime(properties.timeCreated)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'underused-vm', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (CPU metrics)',
+          sku = vmSize, tier = tostring(properties.priority), sizeGb = int(null),
+          os = tostring(properties.storageProfile.osDisk.osType), extra = tostring(properties.licenseType),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('vmSize', vmSize)

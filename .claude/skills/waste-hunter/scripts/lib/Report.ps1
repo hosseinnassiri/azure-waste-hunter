@@ -61,12 +61,25 @@ if (-not $csvRows) { Set-Content $csvPath $CsvHeader -Encoding utf8 }
 # group tag) go to _no-owner.csv.
 $ownerDir = Join-Path $OutDir 'by-owner'
 New-Item -ItemType Directory -Force $ownerDir | Out-Null
-Get-ChildItem $ownerDir -Filter '*.csv' -ErrorAction SilentlyContinue | Remove-Item   # this run's folder only
+Get-ChildItem $ownerDir -Include '*.csv', '*.md' -Recurse -ErrorAction SilentlyContinue | Remove-Item   # this run's folder only
 $ownerGroups = @(@($findings) | Group-Object { $_.owner ? ([string] $_.owner).Trim().ToLower() : '' } | ForEach-Object {
     $items = @($_.Group)
     $slug = $_.Name ? ($_.Name -replace '[^a-z0-9@._-]', '-') : '_no-owner'
     $keys = [Collections.Generic.HashSet[string]]::new([string[]] @($items | ForEach-Object { Get-FindingKey $_ }))
     @($csvRows | Where-Object { $keys.Contains("$($_.wasteType)|$(([string] $_.resourceId).ToLower())") }) | Export-Csv (Join-Path $ownerDir "$slug.csv") -Encoding utf8
+    # A short summary to paste into an email or chat. Written here only; nothing is sent.
+    $om = [Text.StringBuilder]::new()
+    $who = $_.Name ? $items[0].owner : 'resources with no owner tag'
+    $sorted = @($items | Sort-Object @{ e = { [double] $_.rankValue }; Descending = $true })
+    [void] $om.AppendLine("# Azure cleanup candidates for $who")
+    [void] $om.AppendLine('')
+    [void] $om.AppendLine("$($items.Count) finding(s), about $(Format-GroupCost $items) per month ($(@($items | Where-Object { $_.confidence -eq 'high' }).Count) high confidence). From a read-only scan on $($RunTime.ToString('yyyy-MM-dd')): nothing in Azure was changed. Please check each one and act on what you agree with; reply if something must stay, and it will be excluded with your reason.")
+    [void] $om.AppendLine('')
+    foreach ($i in $sorted) {
+        $c = ($null -ne $i.monthlyCost) ? ('{0:N2} {1}/month' -f [double] $i.monthlyCost, $i.currency) : 'cost unknown'
+        [void] $om.AppendLine("- **$(Esc $i.name)** ($(Esc $TypeInfo[$i.wasteType]), $(Esc $i.resourceGroup)): $c, $($i.confidence) confidence. $(Esc $i.reason). Suggested: $(Esc $i.suggestedAction) [Portal]($($i.portalUrl))")
+    }
+    Set-Content (Join-Path $ownerDir "$slug.md") $om.ToString() -Encoding utf8
     [pscustomobject] @{ Owner = $_.Name; File = "by-owner/$slug.csv"; Items = $items
         Rank = [double] (($items | ForEach-Object { [double] $_.rankValue } | Measure-Object -Sum).Sum)
         High = @($items | Where-Object { $_.confidence -eq 'high' }).Count
@@ -138,6 +151,21 @@ if ($fxUsed.Count) {
 }
 L ''
 
+# Quick wins: high-confidence findings whose fix is reversible or removes something nothing depends
+# on (records with QuickWin), and that cost something. A short list to act on first.
+$quickWins = @($findings | Where-Object { $_.wasteType -in $QuickWinTypes -and $_.confidence -eq 'high' -and [double] ($_.monthlyCost ?? 0) -gt 0 } |
+    Sort-Object @{ e = { [double] $_.rankValue }; Descending = $true } | Select-Object -First 15)
+if ($quickWins) {
+    L "## Quick wins: $(Format-GroupCost $quickWins)/month"
+    L ''
+    L 'High-confidence findings whose fix is reversible (deallocate, scale to zero, add a schedule) or removes something nothing depends on. Start here. Data stores, backups and anything that may be a dependency are never on this list.'
+    L ''
+    L '| Resource | Waste type | Est. monthly | Suggested action (not executed) |'
+    L '|---|---|---:|---|'
+    foreach ($i in $quickWins) { L ('| [{0}]({1}) | {2} | {3:N2} {4} | {5} |' -f (Esc $i.name), $i.portalUrl, (Esc $TypeInfo[$i.wasteType]), [double] $i.monthlyCost, $i.currency, (Esc $i.suggestedAction)) }
+    L ''
+}
+
 L '## Changes since the last scan'
 L ''
 if (-not $prev) {
@@ -205,7 +233,7 @@ if ($Trend) {
 if ($ownerGroups) {
     L '## By owner'
     L ''
-    L 'From the `owner` tag (or `createdBy`) on the resource, falling back to its resource group''s tag. Each owner has a CSV in `by-owner/` to send them.'
+    L 'From the `owner` tag (or `createdBy`) on the resource, falling back to its resource group''s tag. Each owner has a CSV and a short summary (`.md`, ready to paste into an email or chat) in `by-owner/`.'
     L ''
     L '| Owner | Findings | High confidence | Est. monthly | List |'
     L '|---|---:|---:|---:|---|'
@@ -257,6 +285,11 @@ L '|---|---|---|---|'
 foreach ($c in $coverage) { L "| ``$($c.Tenant)`` | $($c.Scope) | $(Esc $c.Subscriptions) | $($c.Status) |" }
 L ''
 L ('Rows returned per query (including ignored): ' + ((@($queryStats.GetEnumerator() | ForEach-Object { "``$($_.Key)`` $($_.Value)" })) -join ', ') + '.')
+if ($CollectStats.Count) {
+    L ''
+    L ('Checked without a Resource Graph query: ' + ((@($CollectStats.GetEnumerator() | ForEach-Object { "$($TypeInfo[$_.Key]) $($_.Value) row(s)" })) -join ', ') +
+       ". Reservation orders checked: $($ReservationOrders.Count) (from ``-ReservationOrder`` and usage records)$(($ReservationOrders.Count) ? '' : '; none found, so pass -ReservationOrder <order ID> to check yours').")
+}
 $azEv = @($AzEvents.ToArray())
 $azRetried = @($azEv | Where-Object { $_ -like 'retry|*' })
 $retryDetail = $azRetried ? (' (' + ((@($azRetried | Group-Object { $_.Substring(6) } | ForEach-Object { "$($_.Name) x$($_.Count)" })) -join ', ') + ')') : ''
@@ -326,6 +359,17 @@ HL "<div class=""tile""><span>Findings</span><b>$($findings.Count)</b></div>"
 HL "<div class=""tile""><span>Excluded (tag or exclusions file)</span><b>$([int] $exclTotal)</b></div>"
 if ($prev) { HL "<div class=""tile""><span>Since last scan</span><b>$(@($findings | Where-Object { $_.status -eq 'new' }).Count) new &middot; $($resolved.Count) resolved</b></div>" }
 HL '</div>'
+
+if ($quickWins) {
+    HL "<h2>Quick wins: $(ConvertTo-HtmlText (Format-GroupCost $quickWins))/month</h2>"
+    HL '<p class="small">High-confidence findings whose fix is reversible or removes something nothing depends on. Data stores, backups and possible dependencies are never listed here.</p>'
+    HL '<div class="wrap"><table><thead><tr><th>Resource</th><th>Waste type</th><th class="num">Est. monthly</th><th>Suggested action (not executed)</th></tr></thead><tbody>'
+    foreach ($i in $quickWins) {
+        HL ("<tr><td><a href=""$(ConvertTo-HtmlText $i.portalUrl)"" target=""_blank"" rel=""noopener"">$(ConvertTo-HtmlText $i.name)</a></td><td>$(ConvertTo-HtmlText $TypeInfo[$i.wasteType])</td>" +
+            "<td class=""num"">$(ConvertTo-HtmlText ('{0:N2} {1}' -f [double] $i.monthlyCost, $i.currency))</td><td class=""act"">$(ConvertTo-HtmlText $i.suggestedAction)</td></tr>")
+    }
+    HL '</tbody></table></div>'
+}
 
 HL '<h2>Findings</h2><div class="controls">'
 HL '<input type="search" id="q" placeholder="Search name, owner, reason..." aria-label="Search findings">'

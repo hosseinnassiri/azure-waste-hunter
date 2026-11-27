@@ -1,0 +1,58 @@
+[
+  {
+    "wasteType": "nonprod-geo-redundant-storage",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-build/providers/Microsoft.Storage/storageAccounts/stdevlogs",
+    "name": "stdevlogs",
+    "type": "microsoft.storage/storageaccounts",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-build",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "2025-10-23T05:42:30.1502986Z",
+    "ageDays": 400,
+    "idleDays": null,
+    "idleSource": "not applicable (in use)",
+    "sku": "Standard_RAGRS",
+    "tier": "Hot",
+    "sizeGb": null,
+    "os": "",
+    "extra": "StorageV2",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "accessTier": "Hot"
+    }
+  },
+  {
+    "wasteType": "nonprod-geo-redundant-storage",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-build/providers/Microsoft.Storage/storageAccounts/stdevtiny",
+    "name": "stdevtiny",
+    "type": "microsoft.storage/storageaccounts",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-build",
+    "location": "eastus",
+    "owner": "",
+    "app": "",
+    "env": "dev",
+    "createdTime": "2025-10-23T05:42:30.1502986Z",
+    "ageDays": 400,
+    "idleDays": null,
+    "idleSource": "not applicable (in use)",
+    "sku": "Standard_GRS",
+    "tier": "Hot",
+    "sizeGb": null,
+    "os": "",
+    "extra": "StorageV2",
+    "confidence": "pending",
+    "reason": "",
+    "ignored": 0,
+    "checkInputs": {
+      "accessTier": "Hot"
+    }
+  }
+]

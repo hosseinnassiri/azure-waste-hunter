@@ -1,0 +1,21 @@
+// waste-hunter 28 · Idle API Management instances (CANDIDATES, confirmed by metrics)
+// Every tier except Consumption bills per unit per hour, called or not (Premium about USD 2,800 per
+// unit per month, plus each extra region). The runner flags an instance with 0 gateway requests in
+// 30 days.
+// READ-ONLY. Run:  az graph query -q @28-idle-api-management.kql --first 1000
+resources
+| where type =~ 'microsoft.apimanagement/service'
+| extend skuName = tostring(sku.name), units = coalesce(toint(sku.capacity), 1)
+| where skuName !~ 'Consumption'
+| extend regions = 1 + coalesce(array_length(properties.additionalLocations), 0)
+| extend createdTime = todatetime(properties.createdAtUtc)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-api-management', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = skuName, tier = strcat(tostring(regions), ' region(s)'), sizeGb = units, os = '', extra = '',
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('units', units, 'regions', regions)

@@ -29,6 +29,7 @@ $SharedBodies = @{
     Name = 'stopped-app-service-plan'
     Label = 'App Service plans whose apps are all stopped'
     Order = 21
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     CommitmentEligible = $true   # a reservation or savings plan can cover it
     LivePrice = $SharedBodies.LivePrice
     Estimate = $SharedBodies.Estimate

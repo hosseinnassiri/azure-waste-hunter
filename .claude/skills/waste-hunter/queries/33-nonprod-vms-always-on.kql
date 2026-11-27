@@ -1,0 +1,30 @@
+// waste-hunter 33 · Non-production VMs running around the clock
+// A running VM tagged as non-production (env/environment = dev, test, qa, sandbox, poc, demo, lab or
+// nonprod) with no enabled auto-shutdown schedule (microsoft.devtestlab/schedules) bills 24/7. Off
+// outside 07:00-19:00 on weekdays, it would bill about a third of that. Other schedulers (Automation,
+// Start/Stop VMs v2, pipelines) aren't visible in Resource Graph, so these are medium confidence.
+// READ-ONLY. Run:  az graph query -q @33-nonprod-vms-always-on.kql --first 1000
+resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| where tostring(properties.extended.instanceView.powerState.code) =~ 'PowerState/running'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| where env in~ ('dev', 'development', 'test', 'testing', 'qa', 'sandbox', 'poc', 'demo', 'lab', 'nonprod', 'non-prod', 'non-production')
+| extend vmKey = tolower(id)
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.devtestlab/schedules'
+    | where tostring(properties.status) =~ 'Enabled' and tostring(properties.taskType) =~ 'ComputeVmShutdownTask'
+    | summarize schedules = count() by vmKey = tolower(tostring(properties.targetResourceId))
+  ) on vmKey
+| where coalesce(schedules, 0) == 0
+| extend createdTime = todatetime(properties.timeCreated)
+| project wasteType = 'nonprod-vm-always-on', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays = toint((now() - createdTime) / 1d), idleDays = int(null), idleSource = 'not applicable (running)',
+          sku = tostring(properties.hardwareProfile.vmSize), tier = tostring(properties.priority), sizeGb = int(null),
+          os = tostring(properties.storageProfile.osDisk.osType), extra = tostring(properties.licenseType),
+          confidence = 'medium',
+          reason = strcat('Tagged env=', env, ' and running with no auto-shutdown schedule, so it bills around the clock. Schedulers other than auto-shutdown (Automation, Start/Stop VMs v2, pipelines) are not visible here'),
+          ignored

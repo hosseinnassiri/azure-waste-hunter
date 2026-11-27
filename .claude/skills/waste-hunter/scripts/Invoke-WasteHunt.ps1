@@ -39,6 +39,7 @@ param(
     [string] $Compare = 'auto',      # 'auto' = newest earlier report of the same scope, a report folder, or 'none'
     [ValidateRange(1, 16)] [int] $Parallel = 4,   # concurrent metric checks (az processes); 1 = sequential
     [string] $ExclusionsFile,        # default: ./waste-hunter.exclusions.json if it exists (not in fixture mode)
+    [string[]] $ReservationOrder,    # reservation order IDs to check for unused hours (others are found in usage records)
     [string] $FixtureDir
 )
 
@@ -56,6 +57,8 @@ $WasteTypes = Import-WasteTypes $TypesDir
 # 'pwsh -File' can't pass arrays, so also accept comma-separated lists: -Subscription "A,B"
 if ($Subscription) { $Subscription = @($Subscription | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 if ($Tenant)       { $Tenant       = @($Tenant       | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+if ($ReservationOrder) { $ReservationOrder = @($ReservationOrder | ForEach-Object { $_ -split ',' } | ForEach-Object { ($_.Trim() -split '/')[-1].ToLower() } | Where-Object { $_ }) }
+foreach ($o in @($ReservationOrder)) { if ($o -and $o -notmatch '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') { [Console]::Error.WriteLine("waste-hunter: -ReservationOrder '$o' is not a reservation order ID (a GUID)."); exit 2 } }
 
 $SkillDir = Split-Path -Parent $PSScriptRoot
 $QueryDir = Join-Path $SkillDir 'queries'
@@ -84,6 +87,7 @@ $AllowedAz = @(
     'monitor metrics list'
     'advisor recommendation list'
     'consumption usage list'
+    'consumption reservation summary list'        # reserved vs used hours per reservation (not in Resource Graph)
     'cognitiveservices account deployment list'   # OpenAI deployments aren't in Resource Graph; names/SKUs/capacity only
     'account show'
     'account list'
@@ -159,6 +163,16 @@ if ($FixtureDir -and (Test-Path (Join-Path $FixtureDir 'faults.json'))) {
 $CandidateTypes = @($WasteTypes.Values | Where-Object { $_['Candidate'] } | ForEach-Object { $_.Name })
 $MinAgeDays = 30   # need 30 days of history before calling anything idle
 
+# Types with no Resource Graph query (records with Collect) gather their own rows once per scan.
+# Reservations are one: their orders come from -ReservationOrder and from usage records.
+$CollectTypes = @($WasteTypes.Values | Where-Object { $_['Collect'] })
+$ReservationOrders = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($o in @($ReservationOrder | Where-Object { $_ })) { [void] $ReservationOrders.Add($o) }
+$CollectStats = [ordered]@{}
+# What each collector really checked, as lower-case ID prefixes (a reservation order). An earlier
+# finding of that type outside them was not rechecked this time, so it can't count as resolved.
+$CollectScopes = @{}; foreach ($t in $CollectTypes) { $CollectScopes[$t.Name] = [Collections.Generic.HashSet[string]]::new() }
+
 # ---------------------------------------------------------------------------------------------
 # Exclusions file: the way to exclude resources without write access to tag them. A local file,
 # so nothing in Azure changes. Each entry has "id" (exact) or "pattern" (wildcards * and ?), a
@@ -168,7 +182,8 @@ $MinAgeDays = 30   # need 30 days of history before calling anything idle
 # Loaded before any Azure call so a bad file fails fast; applied by Set-Exclusion (lib/Common.ps1).
 # ---------------------------------------------------------------------------------------------
 if (-not $ExclusionsFile -and -not $FixtureDir -and (Test-Path 'waste-hunter.exclusions.json')) { $ExclusionsFile = 'waste-hunter.exclusions.json' }
-$Exclusions = @(); $ExpiredExclusions = @()
+$Exclusions = @(); $ExpiredExclusions = @(); $ExpiringExclusions = @()
+$ExclusionExists = @{}    # exclusion label -> does the resource still exist ($true/$false; absent = not checked)
 # A config error is printed whole on one line (PowerShell's concise error view cuts long messages)
 try {
 if ($ExclusionsFile) {
@@ -193,9 +208,16 @@ if ($ExclusionsFile) {
             }
             $until = $d.AddDays(1)    # inclusive: applies through the whole "until" day (UTC)
         }
+        # LookupId: what to look up to see whether the resource still exists (a deployment or compute
+        # cluster finding lives under its account or workspace)
         $x = [pscustomobject] @{ Id = $id.ToLower(); Pattern = $pattern.ToLower(); Types = @((Get-Key $e 'wasteType') | Where-Object { $_ } | ForEach-Object { [string] $_ })
-                                 Reason = $reason.Trim(); Until = $untilText; Label = ($id ? $id : $pattern); Hits = 0 }
-        if ($until -and $Now -ge $until) { $ExpiredExclusions += $x } else { $Exclusions += $x }
+                                 Reason = $reason.Trim(); Until = $untilText; Label = ($id ? $id : $pattern); Hits = 0
+                                 LookupId = ($id.ToLower() -replace '/(deployments|computes)/[^/]+$', ''); DaysLeft = ($until ? [int] [math]::Floor(($until - $Now).TotalDays) : $null) }
+        if ($until -and $Now -ge $until) { $ExpiredExclusions += $x }
+        else {
+            $Exclusions += $x
+            if ($until -and $x.DaysLeft -lt 14) { $ExpiringExclusions += $x }
+        }
     }
 }
 }
@@ -296,6 +318,25 @@ try {
             try { foreach ($o in (Invoke-GraphQuery $RgOwnerQuery $p.Subscriptions $p.Mg)) { $RgOwners["$($o.subscriptionId)|$($o.resourceGroup)".ToLower()] = [string] $o.owner } }
             catch { $warnings.Add("Couldn't read resource group owner tags in tenant $($p.TenantId): $($_.Exception.Message)") }
 
+            # Exclusions health: does each resource excluded by exact ID, in a subscription this pass
+            # reads, still exist? One Resource Graph query from a temporary .kql file (KQL passed inline
+            # through az.cmd gets mangled). IDs with quotes are skipped rather than escaped.
+            $toCheck = @(@($Exclusions) + @($ExpiredExclusions) | Where-Object {
+                $_ -and $_.Id -and -not $_.LookupId.Contains("'") -and $_.LookupId -match '^/subscriptions/([^/]+)/' -and $Matches[1] -in $visible })
+            if ($toCheck) {
+                $kqlDir = Join-Path ([IO.Path]::GetTempPath()) ('waste-hunter-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+                try {
+                    New-Item -ItemType Directory $kqlDir | Out-Null
+                    $list = (@($toCheck | ForEach-Object { "'$($_.LookupId)'" } | Sort-Object -Unique)) -join ', '
+                    $kql = Join-Path $kqlDir 'exclusion-check.kql'
+                    Set-Content $kql "// waste-hunter: do the excluded resources still exist? READ-ONLY`nresources | where tolower(id) in ($list) | project id = tolower(id)`n| union (resourcecontainers | where tolower(id) in ($list) | project id = tolower(id))" -Encoding utf8
+                    $found = [Collections.Generic.HashSet[string]]::new([string[]] @(foreach ($e in (Invoke-GraphQuery $kql $p.Subscriptions $p.Mg)) { ([string] $e.id).ToLower() }))
+                    foreach ($x in $toCheck) { $ExclusionExists[$x.Label] = $found.Contains($x.LookupId) }
+                }
+                catch { $warnings.Add("Couldn't check whether excluded resources still exist in tenant $($p.TenantId): $($_.Exception.Message)") }
+                finally { Remove-Item -Recurse -Force $kqlDir -ErrorAction SilentlyContinue }
+            }
+
             foreach ($qf in $queryFiles) {
                 try {
                     Write-Host "  [$($p.TenantId.Substring(0,8))] $($qf.Name) ..." -NoNewline
@@ -380,6 +421,23 @@ finally {
     }
 }
 
+# Types with no Resource Graph query (Collect), once per scan in the user's own context. Reservations
+# belong to a billing scope, not a subscription. A collector that fails leaves its type unverified,
+# so earlier findings of it are "not rechecked", never "resolved".
+foreach ($t in $CollectTypes) {
+    try {
+        Write-Host "  $($t.Name) ..." -NoNewline
+        $got = @(& $t.Collect | Where-Object { $null -ne $_ })
+        Write-Host " $($got.Count) rows"
+        $CollectStats[$t.Name] = $got.Count
+        foreach ($row in $got) { Set-Exclusion $row; $rowsAll.Add($row) }
+    }
+    catch {
+        Write-Host ' FAILED'; [void] $UnverifiedTypes.Add($t.Name); $CollectStats[$t.Name] = 'FAILED'
+        $warnings.Add("$($t.Label): couldn't be checked, so it's missing from this report: $($_.Exception.Message)")
+    }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Findings: exclusions, Advisor merge, idle time, cost, actions
 # ---------------------------------------------------------------------------------------------
@@ -392,7 +450,15 @@ foreach ($r in $rowsAll) { if ([bool] $r.ignored) { $excluded[$r.wasteType] = ($
 $excludedRows = @($rowsAll | Where-Object { [bool] $_.ignored })
 $exclByFile = @($excludedRows | Where-Object { (Get-Key $_ 'excludedBy') -eq 'file' }).Count
 foreach ($x in $ExpiredExclusions) { $warnings.Add("Exclusion for '$($x.Label)' expired on $($x.Until) ($($x.Reason)), so its findings are reported again. Extend or remove it in the exclusions file.") }
-foreach ($x in @($Exclusions | Where-Object { $_.Hits -eq 0 })) { $warnings.Add("Exclusion for '$($x.Label)' matched nothing in this scan (resource gone, out of scope, or a typo). Remove it if it's no longer needed.") }
+foreach ($x in @($Exclusions | Where-Object { $_.Hits -eq 0 })) {
+    $exists = $ExclusionExists[$x.Label]
+    if ($exists -eq $true) { $warnings.Add("Exclusion for '$($x.Label)' matched nothing in this scan: the resource still exists but isn't flagged any more (it's in use now, or no longer that waste type). Remove the entry if it's no longer needed.") }
+    elseif ($exists -eq $false) { $warnings.Add("Exclusion for '$($x.Label)' matched nothing in this scan: the resource no longer exists. Remove the entry.") }
+    else { $warnings.Add("Exclusion for '$($x.Label)' matched nothing in this scan (resource gone, out of scope, or a typo). Remove it if it's no longer needed.") }
+}
+foreach ($x in @($ExpiringExclusions | Where-Object { $_.Hits -gt 0 })) {
+    $warnings.Add("Exclusion for '$($x.Label)' expires on $($x.Until), in $($x.DaysLeft) day(s) ($($x.Reason)). Its findings are reported again after that, so extend ""until"" if the reason still holds.")
+}
 
 $live     = @($rowsAll | Where-Object { -not [bool] $_.ignored })
 # Deduplicated by waste type + ID (the finding key), so the same row seen twice collapses but two
@@ -423,6 +489,9 @@ $PartialSavingTypes = @($WasteTypes.Values | Where-Object { $_['PartialSaving'] 
 
 # Waste types whose cost a reservation or savings plan can cover
 $CommitmentEligible = @($WasteTypes.Values | Where-Object { $_['CommitmentEligible'] } | ForEach-Object { $_.Name })
+
+# Waste types whose fix is reversible or removes something nothing depends on (the "Quick wins" list)
+$QuickWinTypes = @($WasteTypes.Values | Where-Object { $_['QuickWin'] } | ForEach-Object { $_.Name })
 
 # Sovereign clouds have their own portals
 $PortalHost = @{ AzureUSGovernment = 'portal.azure.us'; AzureChinaCloud = 'portal.azure.cn' }[[string] $original.environmentName] ?? 'portal.azure.com'
@@ -536,7 +605,7 @@ $groups = foreach ($t in $TypeInfo.Keys) {
     [pscustomobject] @{ Type = $t; Label = $TypeInfo[$t]; Items = $items
         Total = [double] (($items | ForEach-Object { [double] $_.rankValue } | Measure-Object -Sum).Sum) }
 }
-$groups = @($groups | Sort-Object @{ e = { $_.Items.Count -gt 0 }; Descending = $true }, @{ e = 'Total'; Descending = $true })
+$groups = @($groups | Sort-Object @{ e = { $_.Items.Count -gt 0 }; Descending = $true }, @{ e = 'Total'; Descending = $true }, @{ e = { [double] $WasteTypes[$_.Type].Order } })
 
 # ---------------------------------------------------------------------------------------------
 # Changes since the last scan. Each report folder has findings.json. The newest earlier one with the
@@ -582,9 +651,11 @@ foreach ($k in $prevByKey.Keys) {
     if ($currentKeys.Contains($k)) { continue }
     $p = $prevByKey[$k]
     $prevId = ([string] $p['id']).ToLower()    # (not $pid: that's PowerShell's read-only process-ID variable)
-    $unchecked = -not $ScannedSubs.Contains([string] $p['subscriptionId']) -or $UnverifiedTypes.Contains([string] $p['wasteType']) -or
+    # (A finding with no subscription, such as a reservation, is checked when its type is verified)
+    $unchecked = ([string] $p['subscriptionId'] -and -not $ScannedSubs.Contains([string] $p['subscriptionId'])) -or $UnverifiedTypes.Contains([string] $p['wasteType']) -or
                  @($UncheckedIds | Where-Object { $prevId -eq $_ -or $prevId.StartsWith("$_/") }).Count -gt 0 -or   # itself or a child (OpenAI deployments), not '.../st1' for '.../st10'
-                 ($SkipMetrics -and ([string] $p['wasteType'] -in ($CandidateTypes + @($DerivedTypes.Values | ForEach-Object { $_ }))))
+                 ($SkipMetrics -and ([string] $p['wasteType'] -in ($CandidateTypes + @($DerivedTypes.Values | ForEach-Object { $_ })))) -or
+                 ($CollectScopes.ContainsKey([string] $p['wasteType']) -and -not @($CollectScopes[[string] $p['wasteType']] | Where-Object { $prevId.StartsWith("$_/") }).Count)
     if ($excludedKeys.Contains($k)) { $nowExcluded += $p }
     elseif ($unchecked) { $notRechecked += $p }
     else { $resolved += $p }

@@ -1,0 +1,22 @@
+// waste-hunter 25 · Data platforms left running (CANDIDATES, confirmed by metrics)
+// Fabric capacities, Synapse dedicated SQL pools and Data Explorer clusters bill every hour they run,
+// used or not, and all three can be paused or stopped. Only running ones are returned (Fabric Active,
+// Synapse Online, Data Explorer Running). The runner checks 30 days of connections or queries; Fabric
+// has no usage metric in Azure Monitor, so a Fabric capacity is reported at low confidence to check.
+// READ-ONLY. Run:  az graph query -q @25-idle-data-platforms.kql --first 1000
+resources
+| where type in~ ('microsoft.fabric/capacities', 'microsoft.synapse/workspaces/sqlpools', 'microsoft.kusto/clusters')
+| extend state = tostring(coalesce(properties.state, properties.status))
+| extend platform = case(type =~ 'microsoft.fabric/capacities', 'fabric', type =~ 'microsoft.kusto/clusters', 'kusto', 'synapse')
+| where (platform == 'fabric' and state =~ 'Active') or (platform == 'synapse' and state =~ 'Online') or (platform == 'kusto' and state =~ 'Running')
+| extend createdTime = todatetime(properties.creationDate)
+| extend ageDays = toint((now() - createdTime) / 1d)
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'idle-data-platform', id, name = iff(platform == 'synapse', strcat(tostring(split(id, '/')[8]), '/', name), name), type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays, idleDays = int(null), idleSource = 'pending (metrics)',
+          sku = tostring(sku.name), tier = platform, sizeGb = toint(sku.capacity), os = '', extra = state,
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('platform', platform, 'instances', toint(sku.capacity))

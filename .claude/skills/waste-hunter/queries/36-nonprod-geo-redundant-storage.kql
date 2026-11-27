@@ -1,0 +1,21 @@
+// waste-hunter 36 · Geo-redundant storage in non-production (CANDIDATES, confirmed by metrics)
+// GRS and GZRS (and their read-access versions) keep a second copy in another region and cost about
+// twice LRS or ZRS per GB. A storage account tagged as non-production (env/environment = dev, test,
+// qa, sandbox, poc, demo, lab or nonprod) rarely needs that. The runner reads the stored capacity and
+// flags accounts holding 10 GiB or more.
+// READ-ONLY. Run:  az graph query -q @36-nonprod-geo-redundant-storage.kql --first 1000
+resources
+| where type =~ 'microsoft.storage/storageaccounts'
+| extend skuName = tostring(sku.name)
+| where skuName endswith '_GRS' or skuName endswith '_RAGRS' or skuName endswith '_GZRS' or skuName endswith '_RAGZRS'
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| where env in~ ('dev', 'development', 'test', 'testing', 'qa', 'sandbox', 'poc', 'demo', 'lab', 'nonprod', 'non-prod', 'non-production')
+| extend createdTime = todatetime(properties.creationTime)
+| project wasteType = 'nonprod-geo-redundant-storage', id, name, type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime, ageDays = toint((now() - createdTime) / 1d), idleDays = int(null), idleSource = 'not applicable (in use)',
+          sku = skuName, tier = tostring(properties.accessTier), sizeGb = int(null), os = '', extra = tostring(kind),
+          confidence = 'pending', reason = '', ignored,
+          checkInputs = pack('accessTier', tostring(properties.accessTier))

@@ -125,6 +125,13 @@ function Get-FixtureResponse([string] $cmd, [string[]] $AzArgs) {
             $d = & $read 'deployments.json'
             return ($d -and $d.ContainsKey($key)) ? @($d[$key]) : @()
         }
+        'consumption reservation summary list' {
+            # Keyed by reservation order ID (lower case): that order's daily summary records
+            $o = $AzArgs[[array]::IndexOf($AzArgs, '--reservation-order-id') + 1].ToLower()
+            $d = & $read 'reservations.json'
+            if (-not ($d -and $d.ContainsKey($o))) { throw "fixture: no reservation order $o" }
+            return @($d[$o])
+        }
         'consumption usage list' {
             $sub = $AzArgs[[array]::IndexOf($AzArgs, '--subscription') + 1]
             return @(@(& $read 'consumption.json') | Where-Object { $_ -and $_.instanceId -like "/subscriptions/$sub/*" })
@@ -162,7 +169,7 @@ function Invoke-InParallel([object[]] $Items, [string] $Function) {
         return
     }
     $vars = @{ Now = $Now; MinAgeDays = $MinAgeDays; FixtureDir = $FixtureDir; AllowedAz = $AllowedAz; AzEvents = $AzEvents; MetricCache = $MetricCache
-               FixtureFaults = $FixtureFaults; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts }
+               FixtureFaults = $FixtureFaults; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts; Pricing = $Pricing }
     $indexed = for ($i = 0; $i -lt $Items.Count; $i++) { [pscustomobject] @{ I = $i; Item = $Items[$i] } }
     $out = @($indexed | ForEach-Object -ThrottleLimit $Parallel -Parallel {
         Set-StrictMode -Version Latest

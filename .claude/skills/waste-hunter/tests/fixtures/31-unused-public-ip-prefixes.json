@@ -1,0 +1,27 @@
+[
+  {
+    "wasteType": "unused-public-ip-prefix",
+    "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-net/providers/Microsoft.Network/publicIPPrefixes/ippre-legacy",
+    "name": "ippre-legacy",
+    "type": "microsoft.network/publicipprefixes",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+    "resourceGroup": "rg-net",
+    "location": "eastus",
+    "owner": "netops@example.com",
+    "app": "",
+    "env": "prod",
+    "createdTime": "",
+    "ageDays": null,
+    "idleDays": null,
+    "idleSource": "unknown (not exposed by Resource Graph)",
+    "sku": "Regional",
+    "tier": "/28",
+    "sizeGb": 16,
+    "os": "",
+    "extra": "20.10.30.0/28",
+    "confidence": "medium",
+    "reason": "Prefix 20.10.30.0/28 (16 addresses) has no public IP, NAT gateway or load balancer using it, but every address bills hourly",
+    "ignored": 0
+  }
+]

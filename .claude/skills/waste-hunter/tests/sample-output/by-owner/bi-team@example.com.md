@@ -1,0 +1,7 @@
+# Azure cleanup candidates for bi-team@example.com
+
+2 finding(s), about 8,409.60 USD + 102.49 CAD per month (1 high confidence). From a read-only scan on 2026-11-27: nothing in Azure was changed. Please check each one and act on what you agree with; reply if something must stay, and it will be excluded with your reason.
+
+- **fab-analytics** (Idle Fabric, Synapse and Data Explorer compute, rg-bi): 8,409.60 USD/month, low confidence. Fabric capacity F64 is Active and bills every hour whether or not workloads run. Azure Monitor has no usage metric for Fabric, so usage isn't verified here: check the Fabric Capacity Metrics app. Suggested: Check the Fabric Capacity Metrics app with the owner (bi-team@example.com). If the capacity is idle outside working hours, pause it then (a schedule or a pipeline can do it); if it's unused, delete it. [Portal](https://portal.azure.com/#@00000000-0000-0000-0000-00000000demo/resource/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-bi/providers/Microsoft.Fabric/capacities/fab-analytics)
+- **asp-reports-weu** (Empty App Service plans, rg-reports): 102.49 CAD/month, high confidence. Plan hosts 0 apps (Standard S1 x1 instance(s)). Suggested: Delete the plan if no deployment is planned. If it's being kept for upcoming work, scale it down to Free or B1 until needed. [Portal](https://portal.azure.com/#@00000000-0000-0000-0000-00000000demo/resource/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-reports/providers/Microsoft.Web/serverFarms/asp-reports-weu)
+

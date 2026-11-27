@@ -7,6 +7,7 @@
     Name = 'vm-stopped-not-deallocated'
     Label = 'VMs stopped but not deallocated'
     Order = 5
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     CommitmentEligible = $true   # a reservation or savings plan can cover it
     LivePrice = {
         $spot = $f.tier -eq 'Spot'

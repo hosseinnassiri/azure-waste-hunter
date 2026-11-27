@@ -34,11 +34,30 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 21 | App Service plans whose apps are all stopped | stopped apps still bill their plan's instances |
 | 22 | Backups of deleted VMs | the vault keeps billing for retained recovery points (low confidence: may be the only copy) |
 | 23 | Idle Azure Firewalls | 0 rule hits and under 1 GiB processed in 30 days |
+| 24 | Over-provisioned Cosmos DB throughput | provisioned RU/s whose busiest hour used under 10% of it in 30 days (saving: down to twice the peak) |
+| 25 | Idle Fabric, Synapse and Data Explorer compute | running Synapse pools and Data Explorer clusters with no connections or queries; Active Fabric capacities (low: no usage metric) |
+| 26 | Idle Redis caches | no connected client in 30 days |
+| 27 | Idle Service Bus Premium and Event Hubs namespaces | 0 messages in or out in 30 days |
+| 28 | Idle API Management | 0 gateway requests in 30 days (Consumption tier skipped) |
+| 29 | ML compute clusters that never scale to zero | at least one idle node in every hour for 30 days (minimum nodes above 0) |
+| 30 | Private endpoints with no working connection | connection Disconnected (target deleted) or Rejected |
+| 31 | Unused public IP prefixes | no public IP, NAT gateway or load balancer uses the range |
+| 32 | Empty Front Door and Traffic Manager profiles | no endpoints; Front Door Standard/Premium still bills its base fee |
+| 33 | Non-production VMs with no shutdown schedule | running, tagged dev/test/..., no auto-shutdown (saving: off outside 07:00–19:00 weekdays) |
+| 34 | Underused reservations | under 80% of reserved hours used in 30 days (orders from usage records or `-ReservationOrder`) |
+| 35 | Azure Hybrid Benefit not applied | Windows VMs and SQL on licence-included pricing (low: a saving only if you own licences) |
+| 36 | Geo-redundant storage in non-production | GRS/GZRS accounts tagged dev/test/... holding 10 GiB or more |
+| 37 | Oversized VMs | 4+ vCPUs with hourly CPU under 5% in 95% of hours (saving: one size down) |
 
-Types 8–12, 16–18 and 23 start as candidates from Resource Graph and are only reported when 30 days of Azure
-Monitor metrics confirm them. Anything that may be an app's data store or dependency (a storage
-account behind an Azure Files mount, a registry a Container App pulls from) is rated low confidence
-with a "do not delete" note.
+Types 8–12, 16–18, 23–29, 36 and 37 start as candidates from Resource Graph and are only reported
+when 30 days of Azure Monitor metrics confirm them. Type 34 has no Resource Graph query: reservations
+aren't in Resource Graph, so it reads `az consumption reservation summary list` for each order.
+Anything that may be an app's data store or dependency (a storage account behind an Azure Files
+mount, a registry a Container App pulls from) is rated low confidence with a "do not delete" note.
+
+**Quick wins:** the report opens with up to 15 high-confidence findings whose fix is reversible
+(deallocate, scale to zero, pause, add a schedule) or removes something nothing depends on. Data
+stores, backups and possible dependencies are never on that list.
 
 Each finding includes: resource ID and portal link, type, subscription, resource group, location,
 owner/app/env tags, age or idle time, estimated monthly cost and its source, confidence
@@ -49,7 +68,8 @@ owner/app/env tags, age or idle time, estimated monthly cost and its source, con
 - Azure CLI 2.60+ logged in (`az login`) with **Reader** on the subscriptions you want scanned
 - `az extension add -n resource-graph`
 - PowerShell 7.5+ (`pwsh`)
-- Optional, for idle time and billed cost: **Monitoring Reader** and **Cost Management Reader**
+- Optional, for idle time and billed cost: **Monitoring Reader** and **Cost Management Reader**;
+  for reservation utilization, **Reservations Reader**
 
 ## Usage
 
@@ -72,6 +92,9 @@ pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -OfflinePricing
 
 # Metric checks run 4 at a time by default; 1-16 allowed
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -Parallel 8
+
+# Check these reservation orders for unused hours (others are found in usage records)
+pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -ReservationOrder "<order id>,<order id>"
 ```
 
 Throttled (HTTP 429) and transient `az` errors are retried with backoff, up to 4 attempts; sign-in and
@@ -80,14 +103,15 @@ section counts calls, retries and cache hits.
 
 Output goes to `reports/<timestamp>/`:
 - `report.md`: total estimated monthly savings (and the high-confidence part) at the top, a summary
-  per waste type, **changes since the last scan**, **findings by owner**, findings ranked by cost
-  within each type, then coverage and warnings.
+  per waste type, **quick wins**, **changes since the last scan**, **findings by owner**, findings
+  ranked by cost within each type, then coverage and warnings.
 - `report.html`: the same report as one self-contained page to share (search, filters, sortable
   columns, light/dark), with no external scripts.
 - `findings.csv`: every finding, including a `referenceCommandNotExecuted` column you can review and
   run yourself if you decide to act, plus `status` (new/open) and `firstSeen`.
-- `by-owner/<owner>.csv`: one list per owner tag (falling back to the resource group's tag), plus
-  `_no-owner.csv`.
+- `by-owner/<owner>.csv` and `<owner>.md`: one list per owner tag (falling back to the resource
+  group's tag), plus `_no-owner`. The `.md` is a short summary to paste into an email or chat; nothing
+  is sent.
 - **Trends** in the report and `trends.csv` once there are several scans of the same scope: savings
   over time, median days to resolve (overall and per owner), and the findings open longest.
 - `findings.json`: the baseline the next scan compares against (`-Compare auto|<folder>|none`). A
@@ -105,7 +129,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-45 offline tests, with no Azure, no network and no dependencies:
+51 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
@@ -129,8 +153,9 @@ Tag a resource `waste-hunter:ignore=true` to skip it, or, without write access t
 ```
 
 Each entry needs an exact `id` or a wildcard `pattern`, and a `reason`. `wasteType` and `until`
-(inclusive) are optional. Expired entries and entries that matched nothing show up as warnings, and a
-malformed file stops the scan. The file is gitignored because it names resource IDs. See
+(inclusive) are optional. Warnings flag expired entries, entries expiring within 14 days, and entries
+that matched nothing, saying whether the resource is gone or still exists but is no longer flagged (one
+Resource Graph lookup of the excluded IDs). A malformed file stops the scan. The file is gitignored because it names resource IDs. See
 `.claude/skills/waste-hunter/exclusions.example.json`. Exclusions are counted in the report and listed
 with their reason in `excluded.csv`, not hidden silently.
 
@@ -158,8 +183,8 @@ report states that rate.
 ## Safety
 
 - Every `az` call in the runner goes through an allow list: `graph query`, `monitor metrics list`,
-  `advisor recommendation list`, `consumption usage list`, `cognitiveservices account deployment list`,
-  `account show/list/set`. Anything else
+  `advisor recommendation list`, `consumption usage list`, `consumption reservation summary list`,
+  `cognitiveservices account deployment list`, `account show/list/set`. Anything else
   throws. `account set` only switches the local CLI context for multi-tenant scans, and the
   original default subscription is restored afterwards.
 - The only non-`az` call is a GET to the public Retail Prices API. It's sent only service, SKU,
@@ -172,9 +197,16 @@ report states that rate.
 
 ## Reservations and savings plans
 
-They aren't readable with the allowed commands. Billed costs already reflect them. Estimated costs
-on types a commitment can cover (VMs, OpenAI PTU, SQL, App Service, disks) are marked † in the report:
-if a reservation covers the resource, the commitment is prepaid and the bill drops by less.
+Which reservation covers which resource isn't readable with the allowed commands. Billed costs
+already reflect commitments. Estimated costs on types a commitment can cover (VMs, OpenAI PTU, SQL,
+App Service, disks, Cosmos DB, Redis, data platforms) are marked † in the report: if a reservation
+covers the resource, the commitment is prepaid and the bill drops by less.
+
+Reservation **utilization** is checked (type 34) for every order the scan knows: the ones named in
+usage records it read for billed cost, plus any passed with `-ReservationOrder`. Listing all orders
+needs a command outside the allowed list, so an order the scan never sees isn't checked; the Coverage
+section says how many were. Reading utilization needs the Reservations Reader role. The reservation
+price isn't readable either, so these findings show the unused share of hours, not an amount.
 
 ## Known limitations
 
@@ -182,6 +214,11 @@ if a reservation covers the resource, the commitment is prepaid and the bill dro
   some Visual Studio offers). The report warns and falls back to Advisor or list prices.
 - Resource Graph has no creation time for NICs, public IPs or App Service plans, so their age shows as unknown.
 - Uniform VM scale set instances aren't covered yet.
+- Machine Learning compute instances aren't in Resource Graph and have no idle metric, so only compute
+  clusters are checked (through their workspace's node metrics, which don't name the VM size: idle
+  cores are priced at a CPU rate).
+- Fabric capacities have no usage metric in Azure Monitor, so an Active capacity is reported at low
+  confidence for you to check in the Capacity Metrics app.
 
 ## Layout
 
@@ -190,7 +227,7 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/settings.json                       deny rules backing those rules
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
-  queries/01..23-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23: metric-confirmed candidates)
+  queries/01..37-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23-29, 36-37: metric-confirmed candidates; 34 has none)
   scripts/Invoke-WasteHunt.ps1              runner: allow list, scope, scan, merge, rank
   scripts/lib/*.ps1                         its functions (az reads, metrics, pricing, dispatch) and the report writer
   scripts/types/NN-*.ps1                    one record per waste type: label, flags, metric check, prices, suggested action

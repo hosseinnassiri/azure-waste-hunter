@@ -7,6 +7,7 @@
     Name = 'idle-network-gateway'
     Label = 'Idle NAT, VPN and ExpressRoute gateways and circuits'
     Order = 15
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     LivePrice = {
         switch ([string] $f.tier) {
             'nat' {

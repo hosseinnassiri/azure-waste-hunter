@@ -7,6 +7,7 @@
     Name = 'idle-container-app'
     Label = 'Idle Container Apps with always-on replicas'
     Order = 8
+    QuickWin = $true   # reversible, or nothing depends on it: listed under Quick wins when high confidence
     Candidate = $true
     Check = {
         $m = Get-MetricStats $r.id @('Requests', 'RxBytes', 'TxBytes') 'Total'

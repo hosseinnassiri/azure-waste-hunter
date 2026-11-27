@@ -1,8 +1,9 @@
 {
   "rg-ml/oai-research": [
     {
-      "systemData": {
-        "createdAt": "2026-07-30T01:06:34.3779679Z"
+      "sku": {
+        "capacity": 15,
+        "name": "GlobalProvisionedManaged"
       },
       "properties": {
         "model": {
@@ -10,15 +11,15 @@
           "name": "gpt-4o"
         }
       },
-      "sku": {
-        "capacity": 15,
-        "name": "GlobalProvisionedManaged"
+      "systemData": {
+        "createdAt": "2026-07-30T05:42:30.1502986Z"
       },
       "name": "gpt-ptu-eval"
     },
     {
-      "systemData": {
-        "createdAt": "2026-08-29T01:06:34.3779679Z"
+      "sku": {
+        "capacity": 1,
+        "name": "Standard"
       },
       "properties": {
         "model": {
@@ -26,31 +27,31 @@
           "name": "gpt-4o-mini-2024-07-18.ft-3f9a2c"
         }
       },
-      "sku": {
-        "capacity": 1,
-        "name": "Standard"
+      "systemData": {
+        "createdAt": "2026-08-29T05:42:30.1502986Z"
       },
       "name": "gpt-4o-mini-support-ft"
     },
     {
-      "systemData": {
-        "createdAt": "2026-05-11T01:06:34.3779679Z"
-      },
-      "properties": {
-        "model": {
-          "format": "OpenAI",
-          "name": "gpt-4o"
-        }
-      },
       "sku": {
         "capacity": 50,
         "name": "GlobalStandard"
       },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4o"
+        }
+      },
+      "systemData": {
+        "createdAt": "2026-05-11T05:42:30.1502986Z"
+      },
       "name": "gpt-4o-chat"
     },
     {
-      "systemData": {
-        "createdAt": "2026-01-31T01:06:34.3779679Z"
+      "sku": {
+        "capacity": 100,
+        "name": "ProvisionedManaged"
       },
       "properties": {
         "model": {
@@ -58,9 +59,8 @@
           "name": "gpt-4o"
         }
       },
-      "sku": {
-        "capacity": 100,
-        "name": "ProvisionedManaged"
+      "systemData": {
+        "createdAt": "2026-01-31T05:42:30.1502986Z"
       },
       "name": "gpt-ptu-prod"
     }

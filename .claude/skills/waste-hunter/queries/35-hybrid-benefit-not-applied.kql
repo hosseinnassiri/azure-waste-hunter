@@ -1,0 +1,47 @@
+// waste-hunter 35 · Azure Hybrid Benefit not applied
+// Windows VMs with no licenseType, SQL Server VMs on pay-as-you-go licensing (Standard or
+// Enterprise), and vCore SQL databases, elastic pools and managed instances on LicenseIncluded all
+// pay for the licence by the hour. With Windows Server or SQL Server licences that have Software
+// Assurance (or subscriptions), Azure Hybrid Benefit removes that part. Without licences there's
+// nothing to save, so these are always low confidence. Deallocated VMs (no compute bill),
+// serverless databases and Dev/Test or Visual Studio subscriptions (no licence charge) are skipped.
+// READ-ONLY. Run:  az graph query -q @35-hybrid-benefit-not-applied.kql --first 1000
+resources
+| where (type =~ 'microsoft.compute/virtualmachines' and tostring(properties.storageProfile.osDisk.osType) =~ 'Windows'
+         and isempty(tostring(properties.licenseType)) and tostring(properties.extended.instanceView.powerState.code) !~ 'PowerState/deallocated')
+     or (type =~ 'microsoft.sqlvirtualmachine/sqlvirtualmachines' and tostring(properties.sqlServerLicenseType) =~ 'PAYG'
+         and tostring(properties.sqlImageSku) in~ ('Enterprise', 'Standard'))
+     or (type in~ ('microsoft.sql/servers/databases', 'microsoft.sql/servers/elasticpools', 'microsoft.sql/managedinstances')
+         and tostring(properties.licenseType) =~ 'LicenseIncluded' and tostring(sku.tier) in~ ('GeneralPurpose', 'BusinessCritical', 'Hyperscale')
+         and tostring(sku.name) !contains '_S_')
+| extend kind2 = case(type =~ 'microsoft.compute/virtualmachines', 'windows-vm', type =~ 'microsoft.sqlvirtualmachine/sqlvirtualmachines', 'sql-vm',
+                      type =~ 'microsoft.sql/managedinstances', 'sql-mi', type =~ 'microsoft.sql/servers/elasticpools', 'sql-pool', 'sql-db')
+| extend vmKey = iff(kind2 == 'sql-vm', tolower(tostring(properties.virtualMachineResourceId)), '')
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.compute/virtualmachines'
+    | project vmKey = tolower(id), sqlVmSize = tostring(properties.hardwareProfile.vmSize), sqlVmState = tostring(properties.extended.instanceView.powerState.code)
+  ) on vmKey
+| where kind2 != 'sql-vm' or sqlVmState !~ 'PowerState/deallocated'
+| join kind=leftouter (
+    resourcecontainers
+    | where type =~ 'microsoft.resources/subscriptions'
+    | project subscriptionId, quotaId = tostring(properties.subscriptionPolicies.quotaId)
+  ) on subscriptionId
+| where not(quotaId contains 'MSDN' or quotaId contains 'DevTest')
+| extend vcores = iff(kind2 in ('windows-vm', 'sql-vm'), int(null), toint(coalesce(sku.capacity, properties.vCores))),
+         size = case(kind2 == 'windows-vm', tostring(properties.hardwareProfile.vmSize), kind2 == 'sql-vm', sqlVmSize, tostring(sku.name)),
+         edition = iff(kind2 == 'sql-vm', tostring(properties.sqlImageSku), tostring(sku.tier))
+| extend owner = coalesce(tostring(tags['owner']), tostring(tags['Owner']), tostring(tags['OWNER']), tostring(tags['createdBy']), tostring(tags['CreatedBy'])),
+         app   = coalesce(tostring(tags['app']), tostring(tags['App']), tostring(tags['application']), tostring(tags['Application'])),
+         env   = coalesce(tostring(tags['env']), tostring(tags['Env']), tostring(tags['environment']), tostring(tags['Environment'])),
+         ignored = tostring(tags) contains '"waste-hunter:ignore":"true"'
+| project wasteType = 'hybrid-benefit-not-applied', id, name = iff(kind2 in ('sql-db', 'sql-pool'), strcat(tostring(split(id, '/')[8]), '/', name), name), type, tenantId, subscriptionId, resourceGroup, location,
+          owner, app, env, createdTime = '', ageDays = int(null), idleDays = int(null), idleSource = 'not applicable (in use)',
+          sku = size, tier = kind2, sizeGb = vcores, os = edition, extra = '',
+          confidence = 'low',
+          reason = strcat(case(kind2 == 'windows-vm', 'Windows VM pays for the Windows Server licence by the hour (Azure Hybrid Benefit is off)',
+                               kind2 == 'sql-vm', strcat('SQL Server ', edition, ' on a VM pays for the SQL licence by the hour (pay-as-you-go licensing)'),
+                               strcat('SQL ', edition, ' pays for the SQL Server licence by the hour (LicenseIncluded)')),
+                          '. This is a saving only if you own eligible licences with Software Assurance or subscriptions'),
+          ignored

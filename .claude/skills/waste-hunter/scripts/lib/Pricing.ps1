@@ -95,6 +95,29 @@ function Get-RegistryCost($f, [double] $unitPerDay, [double] $perGbMonth, [doubl
     return $unitPerDay * 30 + [math]::Max(0, [double] $f.storeGiB - $included) * $perGbMonth + [int] $f.replications * $replUnitPerDay * 30
 }
 
+# Family and vCPU count from a VM size name: Standard_D4s_v5 -> D, 4. $null for a name that doesn't parse.
+function Get-VmShape([string] $Size) {
+    if ($Size -notmatch '(?:Standard|Basic)_([A-Za-z])[A-Za-z]*?(\d+)') { return $null }
+    return @{ Family = $Matches[1].ToUpper(); Vcpu = [int] $Matches[2] }
+}
+
+# Hourly pay-as-you-go list price of a VM size in a region (Retail Prices API), or $null
+function Get-VmHourlyPrice([string] $Size, [string] $Region, [bool] $Windows, [bool] $Spot = $false) {
+    $it = @(Get-RetailItems "serviceName eq 'Virtual Machines' and armRegionName eq '$(Get-ODataLiteral $Region)' and armSkuName eq '$(Get-ODataLiteral $Size)'") |
+        Where-Object { $_.unitOfMeasure -eq '1 Hour' -and ($_.skuName -notlike '*Low Priority*') -and (($_.skuName -like '*Spot*') -eq $Spot) -and (($_.productName -like '*Windows*') -eq $Windows) } |
+        Select-Object -First 1
+    return $it ? [double] $it.retailPrice : $null
+}
+
+# Hourly estimate from pricing.json (a per-vCPU rate by size family), or $null for an unknown size
+function Get-VmHourlyEstimate([string] $Size, [bool] $Windows) {
+    $sh = Get-VmShape $Size
+    if (-not $sh) { return $null }
+    $rate = $Pricing.vms.perVcpuHourByFamily[$sh.Family] ?? $Pricing.vms.defaultPerVcpuHour
+    if ($Windows) { $rate += $Pricing.vms.windowsPerVcpuHour }
+    return $rate * $sh.Vcpu
+}
+
 function Get-StorageRedundancyName([string] $sku) {
     $r = ($sku -split '_')[-1].ToUpper()
     return @{ RAGRS = 'RA-GRS'; RAGZRS = 'RA-GZRS' }[$r] ?? $r

@@ -1,0 +1,27 @@
+[
+  {
+    "wasteType": "nonprod-vm-always-on",
+    "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-api/providers/Microsoft.Compute/virtualMachines/vm-dev-api",
+    "name": "vm-dev-api",
+    "type": "microsoft.compute/virtualmachines",
+    "tenantId": "00000000-0000-0000-0000-00000000demo",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroup": "rg-api",
+    "location": "eastus",
+    "owner": "api-team@example.com",
+    "app": "",
+    "env": "dev",
+    "createdTime": "2026-03-22T05:42:30.1502986Z",
+    "ageDays": 250,
+    "idleDays": null,
+    "idleSource": "not applicable (running)",
+    "sku": "Standard_D4s_v5",
+    "tier": "Regular",
+    "sizeGb": null,
+    "os": "Linux",
+    "extra": "",
+    "confidence": "medium",
+    "reason": "Tagged env=dev and running with no auto-shutdown schedule, so it bills around the clock. Schedulers other than auto-shutdown (Automation, Start/Stop VMs v2, pipelines) are not visible here",
+    "ignored": 0
+  }
+]

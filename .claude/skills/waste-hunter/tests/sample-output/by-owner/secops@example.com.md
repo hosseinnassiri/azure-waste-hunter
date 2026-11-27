@@ -1,0 +1,6 @@
+# Azure cleanup candidates for secops@example.com
+
+1 finding(s), about cost unknown per month (0 high confidence). From a read-only scan on 2026-11-27: nothing in Azure was changed. Please check each one and act on what you agree with; reply if something must stay, and it will be excluded with your reason.
+
+- **log-security-archive** (Log Analytics: paid retention or unqueried data, rg-security): cost unknown, medium confidence. retention is 365 days, above the free 31 days; 2,400,000 records ingested in 30 days but 0 queries, including alert queries. Cost depends on GB ingested and retained, which platform metrics do not expose (see the workspace's Usage and estimated costs page).. Suggested: Check the workspace's Usage and estimated costs page for the real GB and cost. Lower retention to the free period unless a compliance rule needs more (or move old data to the cheaper long-term/archive tier). If nobody queries the data, stop sending it (diagnostic settings, data collection rules) or delete the workspace. [Portal](https://portal.azure.com/#@00000000-0000-0000-0000-00000000demo/resource/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-security/providers/Microsoft.OperationalInsights/workspaces/log-security-archive)
+
