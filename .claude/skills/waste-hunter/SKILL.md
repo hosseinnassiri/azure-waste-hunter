@@ -35,7 +35,8 @@ Work out the scope from the request. If it isn't clear, default to the current t
 Optional: `-Compare auto|<report folder>|none` (default `auto`: compare with the newest earlier
 report of the same scope), `-Currency <code>` (default `USD`; for example `CAD`, `EUR`, `GBP`, `JPY`; use it when
 the user names a currency), `-OfflinePricing` (no price API, `pricing.json` only), `-SkipMetrics`
-(faster, no idle time for VMs), `-SkipConsumption` (no billed cost, estimates only), `-OutDir <path>`.
+(faster, no idle time for VMs), `-SkipConsumption` (no billed cost, estimates only), `-Parallel <1-16>`
+(concurrent metric checks, default 4; lower it if the report shows many retries), `-OutDir <path>`.
 
 Detection works in every region and in Azure Government and Azure China. Portal links follow the
 cloud; regional prices cover the public cloud and US Gov.

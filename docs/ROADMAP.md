@@ -24,16 +24,14 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 
 ## 2. Scaling to large tenants
 
-- **Retry on throttling (HTTP 429)** in `Invoke-AzRead`. Resource Graph allows about 15 requests per
-  5 seconds, and one throttled page currently fails the whole query and marks the tenant partial.
-  Reuse the backoff in `Invoke-PriceApi`.
-- **Parallel metric checks.** Every storage account is a candidate and costs 2–4 sequential `az`
-  calls, so 500 accounts means over 1,000 calls (30+ minutes). Use `ForEach-Object -Parallel` with
-  a throttle limit, plus a cache keyed by resource and metric.
-- **Split the runner** (about 1,600 lines) into dot-sourced files: pricing, checks, actions,
-  report. Today a new waste type touches `$TypeInfo`, `$CandidateTypes`, `Confirm-Candidate`,
-  `Get-LivePrice`, `Get-Estimate` and `Get-Action`. Make it one record per type, ideally before
-  adding many new types.
+| Item | Status |
+|---|---|
+| **Retry on throttling.** `Invoke-AzRead` retries HTTP 429, 5xx and dropped connections with exponential backoff and jitter, honouring "retry after N seconds", up to 4 attempts. Sign-in, permission and request errors fail at once. The report counts retries per command. | done |
+| **Parallel metric checks.** Candidate checks and VM idle lookups run `-Parallel` at a time (default 4, 1–16) in runspaces that still go through `Invoke-AzRead` and its allow list. Results keep their input order, and serial and parallel runs are tested to match. | done |
+| **Metrics cache.** Identical metric reads are fetched once per run, including concurrent ones (later callers wait for the first). | done |
+| **Missing `resource-graph` extension** (found on a live scan): az prompted and failed with a traceback. The runner now disables dynamic install for its az processes and names the fix. | done |
+| **Offline fault injection.** `faults.json` in a fixture folder makes chosen az calls fail with real az stderr, so retry and error handling are tested without Azure. | done |
+| **Split the runner** (about 1,700 lines) into dot-sourced files with one record per waste type. Moved to section 4, before adding many new types. | moved |
 
 ## 3. New waste types, by likely savings
 
@@ -71,4 +69,4 @@ expected finding set.
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, then DDoS, Firewall, all-stopped plans, orphaned backups.
-4. Product: split the runner with one record per type, scheduled CI, trends, MCA billing.
+4. Product: split the runner with one record per type (do this before most of section 3), scheduled CI, trends, MCA billing.

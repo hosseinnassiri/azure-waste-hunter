@@ -65,7 +65,14 @@ pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -SkipMetrics -Sk
 
 # No network calls for pricing (pricing.json only)
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -OfflinePricing
+
+# Metric checks run 4 at a time by default; 1-16 allowed
+pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 -Parallel 8
 ```
+
+Throttled (HTTP 429) and transient `az` errors are retried with backoff, up to 4 attempts; sign-in and
+permission errors fail at once. Repeated metric reads are served from a cache. The report's Coverage
+section counts calls, retries and cache hits.
 
 Output goes to `reports/<timestamp>/`:
 - `report.md`: total estimated monthly savings (and the high-confidence part) at the top, a summary
@@ -92,7 +99,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-33 offline tests, with no Azure, no network and no dependencies:
+37 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.

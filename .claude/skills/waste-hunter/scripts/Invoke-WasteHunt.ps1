@@ -37,6 +37,7 @@ param(
     [string] $Currency = 'USD',
     [switch] $OfflinePricing,
     [string] $Compare = 'auto',      # 'auto' = newest earlier report of the same scope, a report folder, or 'none'
+    [ValidateRange(1, 16)] [int] $Parallel = 4,   # concurrent metric checks (az processes); 1 = sequential
     [string] $FixtureDir
 )
 
@@ -79,6 +80,11 @@ $AllowedAz = @(
     'account list'
     'account set'      # local CLI context only, restored at the end
 )
+# Never let az install an extension on its own. With dynamic install on, a missing extension
+# makes az prompt (and fail reading stdin) or, with yes_without_prompt, install it silently. Both are
+# a local change the user must make themselves. Process-local: child az processes inherit it, and
+# the user's CLI config is untouched.
+$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'
 
 # ---------------------------------------------------------------------------------------------
 # Regional list prices: Azure Retail Prices API. A public, unauthenticated, read-only GET, and the
@@ -165,24 +171,116 @@ function Invoke-AzRead {
     $cmd  = @($lead) -join ' '
     if ($cmd -notin $AllowedAz) { throw "Refusing non-read-only az command: 'az $cmd'" }
 
-    if ($FixtureDir) { return Get-FixtureResponse $cmd $AzArgs }
+    # Metrics responses are cached for the run ($Now is fixed, so the same arguments mean the same
+    # window). Two Premium disks on one VM, for example, need its CPU history only once. Checks run in
+    # parallel, so the first caller for a key fetches and later callers wait for its result; if the
+    # fetch fails, the entry is removed and a waiter fetches for itself.
+    $cacheKey = ($cmd -eq 'monitor metrics list') ? ($AzArgs -join "`u{1f}") : $null
+    $entry = $null
+    while ($cacheKey) {
+        $mine = @{ Ready = [Threading.ManualResetEventSlim]::new($false); Res = $null }
+        if ($MetricCache.TryAdd($cacheKey, $mine)) { $entry = $mine; break }
+        $other = $null
+        if ($MetricCache.TryGetValue($cacheKey, [ref] $other)) {
+            $other.Ready.Wait()
+            if ($other.Res) {
+                $AzEvents.Enqueue('cached')
+                if ($other.Res.Empty) { return $null }
+                return $other.Res.Value
+            }
+        }
+    }
 
+    try {
+        for ($attempt = 1; ; $attempt++) {
+            $AzEvents.Enqueue('call')
+            $res = $FixtureDir ? (Invoke-AzFixture $cmd $AzArgs) : (Invoke-AzProcess $AzArgs)
+            if ($res.Code -eq 0) {
+                if ($entry) { $entry.Res = $res }
+                if ($res.Empty) { return $null }
+                # Value is always an array, and returning it unrolls it: a JSON array reaches the caller's
+                # @() as its elements, never as one nested array (which made every Where-Object match).
+                return $res.Value
+            }
+            $wait = Get-AzRetryDelay $res.Err $attempt
+            if ($null -eq $wait) { throw "az $cmd failed (exit $($res.Code)): $(Get-AzErrorSummary $res.Err $cmd)" }
+            $AzEvents.Enqueue("retry|$cmd")
+            Start-Sleep -Milliseconds ([int] ($wait * 1000))
+        }
+    }
+    finally {
+        if ($entry) {
+            if (-not $entry.Res) { $gone = $null; [void] $MetricCache.TryRemove($cacheKey, [ref] $gone) }
+            $entry.Ready.Set()
+        }
+    }
+}
+
+# The one place az runs. Called only by Invoke-AzRead, after the allow-list check.
+function Invoke-AzProcess([string[]] $AzArgs) {
     $errFile = [IO.Path]::GetTempFileName()
     try {
         $out  = & az @AzArgs --only-show-errors -o json 2> $errFile
         $code = $LASTEXITCODE
-        if ($code -ne 0) {
-            $msg = (Get-Content $errFile | Where-Object { $_ -match 'ERROR|AADSTS|message' } | Select-Object -First 3) -join ' '
-            if (-not $msg) { $msg = (Get-Content $errFile -TotalCount 2) -join ' ' }
-            throw "az $cmd failed (exit $code): $msg"
-        }
+        $err  = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue) ?? ''
+        if ($code -ne 0) { return @{ Code = $code; Err = $err } }
         $text = ($out -join "`n").Trim()
-        if (-not $text) { return $null }
-        # No comma-wrap here: a JSON array must reach the caller's @() as its elements, not as one
-        # nested array. (A nested array made every Where-Object filter match everything.)
-        return ($text | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String)
+        if (-not $text) { return @{ Code = 0; Empty = $true; Value = @() } }
+        return @{ Code = 0; Empty = $false; Value = @($text | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String) }
     }
     finally { Remove-Item $errFile -ErrorAction SilentlyContinue }
+}
+
+# Seconds to wait before retrying a failed az call, or $null when it shouldn't be retried.
+# Retried: throttling (Resource Graph allows ~15 requests per 5 seconds per user; Monitor and ARM have
+# their own limits), 5xx and dropped connections. Never retried: sign-in, permission and request
+# errors, which fail the same way every time. Up to 4 attempts, honouring "retry after N seconds".
+$AzMaxAttempts = 4
+$RetryBaseSeconds = $FixtureDir ? 0 : 2     # fixture runs exercise the retry path without waiting
+function Get-AzRetryDelay([string] $Err, [int] $Attempt) {
+    if ($Attempt -ge $AzMaxAttempts) { return $null }
+    if ($Err -match '(?i)AADSTS|AuthorizationFailed|InvalidAuthenticationToken|\(Forbidden\)|az login|BadRequest|InvalidQuery|ResourceNotFound|NotFound\)') { return $null }
+    if ($Err -notmatch '(?i)\b429\b|TooManyRequests|Too Many Requests|RateLimit|throttl|\b50[234]\b|ServiceUnavailable|InternalServerError|GatewayTimeout|BadGateway|timed out|Connection (aborted|reset)|RemoteDisconnected') { return $null }
+    if ($RetryBaseSeconds -le 0) { return 0.0 }   # fixture runs: retry at once
+    # Exponential backoff with jitter, so parallel checks throttled together don't retry in lockstep
+    $wait = $RetryBaseSeconds * [math]::Pow(2, $Attempt - 1) + (Get-Random -Minimum 0.0 -Maximum ($RetryBaseSeconds / 2))
+    if ($Err -match '(?i)retry after (\d+)') { $wait = [math]::Max($wait, [int] $Matches[1]) }
+    return [math]::Min(30.0, $wait)
+}
+function Get-AzErrorSummary([string] $Err, [string] $Cmd) {
+    $lines = @($Err -split '\r?\n' | Where-Object { $_.Trim() })
+    $msg = (@($lines | Where-Object { $_ -match 'ERROR|AADSTS|message' } | Select-Object -First 3)) -join ' '
+    if (-not $msg) { $msg = (@($lines | Select-Object -First 2)) -join ' ' }
+    # 'az graph' comes from a CLI extension. Without it az says the command is "misspelled" (or, with
+    # dynamic install on, prompts and fails reading stdin), neither of which names the fix.
+    if ($Cmd -like 'graph *' -and $Err -match "(?i)misspelled or not recognized|requires the extension|EOF when reading a line") {
+        $msg += " The Azure CLI 'resource-graph' extension isn't installed. Install it yourself with: az extension add -n resource-graph"
+    }
+    return $msg
+}
+
+# Shared across parallel runspaces, so all thread-safe: call/retry/cache events and the metrics cache
+$AzEvents    = [Collections.Concurrent.ConcurrentQueue[string]]::new()
+$MetricCache = [Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+
+# Fixture mode: canned responses from -FixtureDir, plus optional injected failures from faults.json,
+# [{ cmd, match, failures, stderr }]: the first <failures> calls of <cmd> whose arguments contain
+# <match> fail with <stderr>. That tests retry and error handling offline.
+$FixtureFaults = @()
+if ($FixtureDir -and (Test-Path (Join-Path $FixtureDir 'faults.json'))) {
+    $FixtureFaults = @(foreach ($f in @(Get-Content (Join-Path $FixtureDir 'faults.json') -Raw | ConvertFrom-Json -AsHashtable)) {
+        $tokens = [Collections.Concurrent.ConcurrentQueue[int]]::new(); foreach ($i in 1..([int] $f['failures'])) { $tokens.Enqueue($i) }
+        @{ Cmd = [string] $f['cmd']; Match = [string] $f['match']; Stderr = [string] $f['stderr']; Tokens = $tokens }
+    })
+}
+function Invoke-AzFixture([string] $cmd, [string[]] $AzArgs) {
+    $joined = $AzArgs -join ' '; $t = 0
+    foreach ($f in $FixtureFaults) {
+        if ($f.Cmd -eq $cmd -and $joined.Contains($f.Match) -and $f.Tokens.TryDequeue([ref] $t)) { return @{ Code = 1; Err = $f.Stderr } }
+    }
+    $v = @(Get-FixtureResponse $cmd $AzArgs)
+    # Same shape as a real response: a $null answer is Empty (returns $null), @() returns nothing
+    return @{ Code = 0; Empty = ($v.Count -eq 1 -and $null -eq $v[0]); Value = $v }
 }
 
 # Offline mode. Reads canned responses from -FixtureDir so the whole pipeline runs without Azure.
@@ -466,6 +564,40 @@ function Confirm-Candidate($r) {
     return @()
 }
 
+# Runs a function over items, -Parallel at a time, and returns one result per item in input order:
+# @{ Value = <the function's output>; Error = <message or $null> }. Each runspace re-creates the
+# functions and variables below from their source, and every az call still goes through
+# Invoke-AzRead and its allow list. A function a check needs must be listed here, or that check
+# fails with "not recognized" (and the fixture finding-set test catches it).
+$ParallelFunctions = @('Invoke-AzRead', 'Invoke-AzProcess', 'Invoke-AzFixture', 'Get-FixtureResponse', 'Get-AzRetryDelay', 'Get-AzErrorSummary',
+                       'Get-MetricStats', 'Get-LastCpuActivity', 'Get-Key', 'Get-StatSum', 'Get-StatLast', 'ConvertTo-GiB', 'Format-Bytes',
+                       'New-FindingFrom', 'Confirm-Candidate')
+function Invoke-InParallel([object[]] $Items, [string] $Function) {
+    $Items = @($Items | Where-Object { $null -ne $_ })
+    if (-not $Items) { return }
+    if ($Parallel -le 1) {
+        foreach ($it in $Items) {
+            try { [pscustomobject] @{ Value = @(& $Function $it); Error = $null } }
+            catch { [pscustomobject] @{ Value = @(); Error = $_.Exception.Message } }
+        }
+        return
+    }
+    $defs = (@($ParallelFunctions | ForEach-Object { "function $_ {`n$((Get-Command $_ -CommandType Function).Definition)`n}" })) -join "`n"
+    $vars = @{ Now = $Now; MinAgeDays = $MinAgeDays; FixtureDir = $FixtureDir; AllowedAz = $AllowedAz; AzEvents = $AzEvents; MetricCache = $MetricCache
+               FixtureFaults = $FixtureFaults; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts }
+    $indexed = for ($i = 0; $i -lt $Items.Count; $i++) { [pscustomobject] @{ I = $i; Item = $Items[$i] } }
+    $out = @($indexed | ForEach-Object -ThrottleLimit $Parallel -Parallel {
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
+        $job = $_
+        foreach ($kv in ($using:vars).GetEnumerator()) { Set-Variable -Name $kv.Key -Value $kv.Value }
+        . ([scriptblock]::Create($using:defs))
+        try { [pscustomobject] @{ I = $job.I; Value = @(& $using:Function $job.Item); Error = $null } }
+        catch { [pscustomobject] @{ I = $job.I; Value = @(); Error = $_.Exception.Message } }
+    })
+    foreach ($r in @($out | Sort-Object I)) { [pscustomobject] @{ Value = $r.Value; Error = $r.Error } }
+}
+
 # Actual cost per resource over the last 30 days, keyed by lower-case resource ID.
 function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
     $usage = Invoke-AzRead @('consumption', 'usage', 'list', '--subscription', $SubscriptionId,
@@ -609,26 +741,34 @@ try {
             # so they still count as excluded.
             $cands = @($passRows | Where-Object { $_.wasteType -in $CandidateTypes -and -not [bool] $_.ignored })
             if ($cands -and -not $SkipMetrics) { Write-Host "  checking $($cands.Count) candidate(s) against 30 days of metrics ..." }
+            # Checks run -Parallel at a time; results come back in candidate order.
+            $checks = $SkipMetrics ? @() : @(Invoke-InParallel $cands 'Confirm-Candidate')
             $confirmed = [Collections.Generic.List[object]]::new()
+            $j = 0
             foreach ($row in $passRows) {
                 if ($row.wasteType -notin $CandidateTypes -or [bool] $row.ignored) { $confirmed.Add($row); continue }
                 if (-not $CandidateStats.ContainsKey($row.wasteType)) { $CandidateStats[$row.wasteType] = @{ checked = 0; flagged = 0; skipped = 0; failed = 0 } }
                 $st = $CandidateStats[$row.wasteType]
                 if ($SkipMetrics) { $st.skipped++; [void] $UncheckedIds.Add(([string] $row.id).ToLower()); continue }
                 $st.checked++
-                try { foreach ($fnd in @(Confirm-Candidate $row)) { if ($fnd) { $confirmed.Add($fnd); $st.flagged++ } } }
-                catch {
+                $c = $checks[$j++]
+                if ($c.Error) {
                     $st.failed++; [void] $UncheckedIds.Add(([string] $row.id).ToLower())
-                    $warnings.Add("Couldn't check $($row.name) ($($row.wasteType)), so it's not in this report: $($_.Exception.Message)")
+                    $warnings.Add("Couldn't check $($row.name) ($($row.wasteType)), so it's not in this report: $($c.Error)")
+                    continue
                 }
+                foreach ($fnd in @($c.Value)) { if ($fnd) { $confirmed.Add($fnd); $st.flagged++ } }
             }
             $passRows = $confirmed
 
             # Idle time for stopped VMs (needs this tenant's context)
-            foreach ($vm in @($passRows | Where-Object { $_.wasteType -eq 'vm-stopped-not-deallocated' -and -not $_.ignored })) {
-                if ($SkipMetrics) { break }
-                try { $idleInfo[$vm.id.ToLower()] = Get-LastCpuActivity $vm.id }
-                catch { $warnings.Add("Metrics unavailable for $($vm.name): $($_.Exception.Message)") }
+            $vms = @($passRows | Where-Object { $_.wasteType -eq 'vm-stopped-not-deallocated' -and -not $_.ignored })
+            if ($vms -and -not $SkipMetrics) {
+                $acts = @(Invoke-InParallel @($vms | ForEach-Object { $_.id }) 'Get-LastCpuActivity')
+                for ($k = 0; $k -lt $vms.Count; $k++) {
+                    if ($acts[$k].Error) { $warnings.Add("Metrics unavailable for $($vms[$k].name): $($acts[$k].Error)") }
+                    else { $idleInfo[$vms[$k].id.ToLower()] = @($acts[$k].Value)[0] }
+                }
             }
 
             # Billed cost, only for subscriptions that have findings
@@ -1474,6 +1614,11 @@ L '|---|---|---|---|'
 foreach ($c in $coverage) { L "| ``$($c.Tenant)`` | $($c.Scope) | $(Esc $c.Subscriptions) | $($c.Status) |" }
 L ''
 L ('Rows returned per query (including ignored): ' + ((@($queryStats.GetEnumerator() | ForEach-Object { "``$($_.Key)`` $($_.Value)" })) -join ', ') + '.')
+$azEv = @($AzEvents.ToArray())
+$azRetried = @($azEv | Where-Object { $_ -like 'retry|*' })
+$retryDetail = $azRetried ? (' (' + ((@($azRetried | Group-Object { $_.Substring(6) } | ForEach-Object { "$($_.Name) x$($_.Count)" })) -join ', ') + ')') : ''
+L ''
+L "az calls: $(@($azEv | Where-Object { $_ -eq 'call' }).Count), $($azRetried.Count) retried after throttling or a transient error$retryDetail, $(@($azEv | Where-Object { $_ -eq 'cached' }).Count) metric read(s) served from cache. Metric checks ran $Parallel at a time (``-Parallel``)."
 if ($CandidateStats.Count) {
     $parts = foreach ($k in $CandidateTypes) { $s = $CandidateStats[$k]; if ($s) {
         $unit = ($k -eq 'idle-openai-deployment') ? 'account(s)' : 'resource(s)'

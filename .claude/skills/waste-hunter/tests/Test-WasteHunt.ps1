@@ -113,6 +113,11 @@ try {
     Test 'Guard: az is only ever invoked inside Invoke-AzRead' {
         $src = Get-Content $Runner -Raw
         Assert-Equal 1 ([regex]::Matches($src, '&\s*az\s')).Count 'number of direct az invocations'
+        # The az call lives in Invoke-AzProcess, which only Invoke-AzRead may call (after the allow-list check)
+        Assert ($src -match '(?s)function Invoke-AzProcess.*?&\s*az\s') 'the az call must be inside Invoke-AzProcess'
+        $callers = @([regex]::Matches($src, '(?<!function )Invoke-AzProcess\b(?!'')') | ForEach-Object {
+            $before = $src.Substring(0, $_.Index); $before.Substring($before.LastIndexOf("`nfunction ") + 10).Split(' ', 2)[0] })
+        Assert-Equal 'Invoke-AzRead' (($callers | Sort-Object -Unique) -join ', ') 'functions that call Invoke-AzProcess'
         Assert ($src -notmatch 'Invoke-Expression|\biex\b|Start-Process\s+az') 'runner must not shell out to az any other way'
     }
     Test 'Guard: the only external endpoint is the Retail Prices API, by GET' {
@@ -310,6 +315,59 @@ try {
         Assert-Equal 'empty-app-service-plan, empty-resource-group' (@($asp | ForEach-Object { $_.wasteType } | Sort-Object) -join ', ') 'waste types on asp-legacy-api'
         Assert-Equal 1 @($asp | Where-Object { $_.reason -match 'corroborated by Advisor' }).Count 'findings that merged the Advisor recommendation'
         Assert-Equal 1 @($r.Rows | Where-Object { $_.name -eq 'rg-old-poc' }).Count 'rg-old-poc after an exact duplicate row'
+    }
+    # Retry and caching. Fixture faults (faults.json) make the first N matching az calls fail with a
+    # given stderr, which exercises the same retry path a real az error takes.
+    function Set-Faults([string] $Dir, [object[]] $Faults) { ConvertTo-Json -InputObject @($Faults) -Depth 5 | Set-Content (Join-Path $Dir 'faults.json') }
+    function Get-AzStats($run) {
+        Assert ($run.Report -match 'az calls: (\d+), (\d+) retried.*?, (\d+) metric read') 'az calls line missing from the report'
+        return @{ Calls = [int] $Matches[1]; Retried = [int] $Matches[2]; Cached = [int] $Matches[3] }
+    }
+    $throttle = 'ERROR: (TooManyRequests) Too many requests. Please retry after 1 seconds. Code: RateLimiting'
+    Test 'Retry: throttled and transient az errors are retried; sign-in errors are not; repeated metric reads are cached' {
+        $fx = Copy-Fixtures 'retry'
+        # A second Premium disk on vm-retired-app: its CPU history must come from the cache
+        Edit-Fixture $fx '18-premium-disks-on-deallocated-vms.json' { param($d)
+            $n = $d[0] | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $n.name = 'vm-retired-app_data1'; $n.id = $n.id -replace '_OsDisk$', '_data1'; @($d) + $n }
+        Set-Faults $fx @(
+            @{ cmd = 'graph query'; match = '01-unattached-disks'; failures = 2; stderr = $throttle }
+            @{ cmd = 'monitor metrics list'; match = 'bas-dev'; failures = 1; stderr = 'ERROR: (ServiceUnavailable) The service is temporarily unavailable. Status 503' }
+            @{ cmd = 'graph query'; match = '02-orphaned-nics'; failures = 1; stderr = "ERROR: AADSTS700082: The refresh token has expired. Run 'az login'." })
+        $r = Invoke-Run $fx 'retry'
+        foreach ($n in 'disk-sql-data-old', 'bas-dev', 'vm-retired-app_OsDisk', 'vm-retired-app_data1') { Get-Row $r $n | Out-Null }
+        Assert ($r.Report -match '02-orphaned-nics\.kql: az graph query failed \(exit 1\): ERROR: AADSTS700082') 'a sign-in error must fail at once, not be retried'
+        Assert (-not ($r.Rows | Where-Object { $_.wasteType -eq 'orphaned-nic' })) 'orphaned NICs should be missing (their query failed)'
+        Assert ($r.Report -match '\| partial \|') 'tenant with a failed query should be partial'
+        $s = Get-AzStats $r
+        Assert-Equal 3 $s.Retried 'retried calls (2 throttled graph pages + 1 metrics 503)'
+        Assert ($r.Report -match 'retried after throttling or a transient error \(graph query x2, monitor metrics list x1\)') 'retries should be listed per command'
+        Assert ($s.Cached -ge 3) "second disk on the same VM should read its 3 CPU windows from the cache (cached: $($s.Cached))"
+    }
+    Test 'Retry: throttling that outlasts every attempt fails the query (partial), never a silent clean result' {
+        $fx = Copy-Fixtures 'retry-max'
+        Set-Faults $fx @(@{ cmd = 'graph query'; match = '01-unattached-disks'; failures = 4; stderr = $throttle })
+        $r = Invoke-Run $fx 'retry-max'
+        Assert ($r.Report -match '01-unattached-disks\.kql: az graph query failed') 'query should fail after the last attempt'
+        Assert ($r.Report -match '\| partial \|') 'tenant should be partial'
+        Assert-Equal 3 (Get-AzStats $r).Retried 'retries before giving up (4 attempts)'
+    }
+    Test 'Errors: a missing resource-graph extension fails the tenant with the fix, and is not retried' {
+        $fx = Copy-Fixtures 'no-extension'
+        # Real az 2.x output with extension.use_dynamic_install=no (which the runner sets)
+        Set-Faults $fx @(@{ cmd = 'graph query'; match = 'coverage-check'; failures = 1
+            stderr = "ERROR: 'graph' is misspelled or not recognized by the system.`nIf the command is from an extension, please make sure the corresponding extension is installed." })
+        $r = Invoke-Run $fx 'no-extension'
+        Assert ($r.Report -match '\| failed \|') 'tenant should be failed'
+        Assert ($r.Report -match 'az extension add -n resource-graph') 'report should name the fix'
+        Assert-Equal 0 (Get-AzStats $r).Retried 'retries for a missing extension'
+        Assert ((Get-Content $Runner -Raw) -match "\`$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'") 'runner must disable dynamic extension install'
+    }
+    Test 'Parallel: -Parallel 1 and the default give the same findings and costs' {
+        $r = Invoke-Run $Fixtures 'serial' @('-Parallel', '1')
+        $a = @($base.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)|$($_.monthlyCost)|$($_.confidence)" } | Sort-Object) -join "`n"
+        $b = @($r.Rows | ForEach-Object { "$($_.wasteType)|$($_.name)|$($_.monthlyCost)|$($_.confidence)" } | Sort-Object) -join "`n"
+        Assert ($a -eq $b) 'serial and parallel runs differ'
+        Assert ($r.Report -match 'Metric checks ran 1 at a time') 'report should state the parallelism'
     }
     Test 'Changes: -Compare none skips the comparison' {
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')

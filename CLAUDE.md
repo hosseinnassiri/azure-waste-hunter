@@ -89,8 +89,14 @@ Ask the user instead.
   breaks. Report metadata (`generated`, `firstSeen`) uses the real run time (`$RunTime`).
 - Billed cost is the saving only when the fix removes the whole bill. Tier changes and
   retention-only findings (`$PartialSavingTypes`, `partialSaving`) use the price difference.
-- Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise az
-  stderr or exit-code handling. Check those against a real login.
+- Metric checks run in `ForEach-Object -Parallel` runspaces (`Invoke-InParallel`), which re-create
+  the functions in `$ParallelFunctions` and the variables it passes. A function a check calls must
+  be in that list. Shared state must be thread-safe (`$AzEvents`, `$MetricCache`).
+- The runner sets `AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no` so az never prompts or installs an extension
+  itself. A missing `resource-graph` extension fails the tenant with the fix in the message.
+- Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise the real az
+  stderr or exit-code handling. A fixture folder's `faults.json` injects az failures (with real az
+  stderr text) to test retry and error handling offline, but check new messages against a real login.
 - Load Balancer and NAT Gateway prices are published under `armRegionName` `Global` / `US Gov`,
   not per region.
 - In `SKILL.md`, never write `$0`, `$1` or `$ARGUMENTS`, even as prices. The skill loader replaces
