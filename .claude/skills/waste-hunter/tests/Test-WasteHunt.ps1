@@ -94,6 +94,16 @@ try {
             Assert ($noTostring -notmatch '\btags\b(?![\[.])') "$($q.Name) projects 'tags' wholesale"
         }
     }
+    Test 'Queries: a table other than the main one is joined at most once (Resource Graph rejects more)' {
+        # DisallowedMaxNumberOfRemoteTables, found live on query 22 (the fixtures can't catch it). A query
+        # may join its own main table any number of times; any other table only once.
+        foreach ($q in $queries) {
+            $code = (Get-Content $q.FullName | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
+            $main = ([regex]::Match($code, '^\s*(\w+)')).Groups[1].Value.ToLower()
+            $right = @([regex]::Matches($code, '(?i)\bjoin\b[^(]*\(\s*(\w+)') | ForEach-Object { $_.Groups[1].Value.ToLower() } | Where-Object { $_ -ne $main })
+            foreach ($g in @($right | Group-Object)) { Assert ($g.Count -le 1) "$($q.Name) (main table $main) joins '$($g.Name)' $($g.Count) times; Resource Graph allows another table once" }
+        }
+    }
     Test 'Queries: candidate checkInputs never carry env vars, settings or secrets' {
         foreach ($q in $queries) {
             $t = Get-Content $q.FullName -Raw

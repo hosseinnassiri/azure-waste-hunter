@@ -60,6 +60,9 @@ Ask the user instead.
 - Run queries from files: `az graph query -q @path/to/file.kql`. Passing KQL inline through
   `az.cmd` on Windows mangles double quotes. `//` comments in `.kql` files are fine.
 - Resource Graph returns booleans as `0`/`1`.
+- Resource Graph lets a query join a table other than its main table only once
+  (`DisallowedMaxNumberOfRemoteTables`). Joining the main table to itself is fine. Vaults, for example, are
+  also in `recoveryservicesresources`. A static test checks this, because fixtures can't.
 - Number files `NN-name.kql`. The runner runs every `queries/*.kql` in order.
 - **Each waste type is a record** in `scripts/types/NN-name.ps1`, named after its query. It holds the
   label, flags (`Candidate`, `Parent`, `PartialSaving`, `CommitmentEligible`) and the `Check`,

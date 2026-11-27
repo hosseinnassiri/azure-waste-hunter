@@ -105,7 +105,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-44 offline tests, with no Azure, no network and no dependencies:
+45 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
