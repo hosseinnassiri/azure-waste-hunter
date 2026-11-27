@@ -38,6 +38,7 @@ param(
     [switch] $OfflinePricing,
     [string] $Compare = 'auto',      # 'auto' = newest earlier report of the same scope, a report folder, or 'none'
     [ValidateRange(1, 16)] [int] $Parallel = 4,   # concurrent metric checks (az processes); 1 = sequential
+    [string] $ExclusionsFile,        # default: ./waste-hunter.exclusions.json if it exists (not in fixture mode)
     [string] $FixtureDir
 )
 
@@ -85,6 +86,28 @@ $AllowedAz = @(
 # a local change the user must make themselves. Process-local: child az processes inherit it, and
 # the user's CLI config is untouched.
 $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'
+
+# ---------------------------------------------------------------------------------------------
+# Exclusions file: the way to exclude resources without write access to tag them. A local file,
+# so nothing in Azure changes. Each entry has "id" (exact) or "pattern" (wildcards * and ?), a
+# required "reason", and optional "wasteType" (one or a list) and "until" (yyyy-MM-dd; the entry
+# stops applying after that day). Matching is case-insensitive. A malformed file stops the scan,
+# because silently ignoring it would report everything it was meant to exclude.
+# ---------------------------------------------------------------------------------------------
+# Marks a row excluded by the tag (from the query) or by the exclusions file. Excluded rows stay in
+# the data, so they're counted and the scan-to-scan comparison sees them as excluded, not resolved.
+function Set-Exclusion($row) {
+    if ([bool] $row.ignored) { if (-not (Get-Key $row 'excludedBy')) { $row['excludedBy'] = 'tag'; $row['excludeReason'] = 'waste-hunter:ignore=true' }; return }
+    $rid = ([string] $row.id).ToLower()
+    foreach ($x in $Exclusions) {
+        if ($x.Types -and $row.wasteType -notin $x.Types) { continue }
+        if (($x.Id -and $rid -eq $x.Id) -or ($x.Pattern -and $rid -like $x.Pattern)) {
+            $row['ignored'] = $true; $row['excludedBy'] = 'file'; $row['excludeReason'] = $x.Reason; $row['excludeUntil'] = $x.Until
+            $x.Hits++
+            return
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------------------------
 # Regional list prices: Azure Retail Prices API. A public, unauthenticated, read-only GET, and the
@@ -627,6 +650,41 @@ function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
 # ---------------------------------------------------------------------------------------------
 # Scope -> passes (one per tenant, since az graph query uses the current tenant's token)
 # ---------------------------------------------------------------------------------------------
+# Exclusions file (see Set-Exclusion), loaded before any Azure call so a bad file fails fast
+if (-not $ExclusionsFile -and -not $FixtureDir -and (Test-Path 'waste-hunter.exclusions.json')) { $ExclusionsFile = 'waste-hunter.exclusions.json' }
+$Exclusions = @(); $ExpiredExclusions = @()
+# A config error is printed whole on one line (PowerShell's concise error view cuts long messages)
+try {
+if ($ExclusionsFile) {
+    if (-not (Test-Path $ExclusionsFile)) { throw "Exclusions file not found: $ExclusionsFile" }
+    try { $doc = Get-Content $ExclusionsFile -Raw | ConvertFrom-Json -AsHashtable -DateKind String }
+    catch { throw "Exclusions file $ExclusionsFile is not valid JSON: $($_.Exception.Message)" }
+    $entries = @((Get-Key $doc 'exclusions') | Where-Object { $null -ne $_ })
+    if (-not ($doc -is [System.Collections.IDictionary]) -or -not $doc.Contains('exclusions')) { throw "Exclusions file $ExclusionsFile needs a top-level ""exclusions"" list." }
+    $n = 0
+    foreach ($e in $entries) {
+        $n++
+        $where = "Exclusions file entry $n"
+        if (-not ($e -is [System.Collections.IDictionary])) { throw "${where}: must be an object." }
+        $id = [string] (Get-Key $e 'id'); $pattern = [string] (Get-Key $e 'pattern'); $reason = [string] (Get-Key $e 'reason')
+        if ([bool] $id -eq [bool] $pattern) { throw "${where}: needs exactly one of ""id"" or ""pattern""." }
+        if (-not $reason.Trim()) { throw "${where} ($id$pattern): needs a ""reason"", so the exclusion is on record." }
+        $until = $null; $untilText = [string] (Get-Key $e 'until')
+        if ($untilText) {
+            $d = [DateTime]::MinValue
+            if (-not [DateTime]::TryParseExact($untilText, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal', [ref] $d)) {
+                throw "${where} ($id$pattern): ""until"" must be a date like 2027-03-31, got '$untilText'."
+            }
+            $until = $d.AddDays(1)    # inclusive: applies through the whole "until" day (UTC)
+        }
+        $x = [pscustomobject] @{ Id = $id.ToLower(); Pattern = $pattern.ToLower(); Types = @((Get-Key $e 'wasteType') | Where-Object { $_ } | ForEach-Object { [string] $_ })
+                                 Reason = $reason.Trim(); Until = $untilText; Label = ($id ? $id : $pattern); Hits = 0 }
+        if ($until -and $Now -ge $until) { $ExpiredExclusions += $x } else { $Exclusions += $x }
+    }
+}
+}
+catch { [Console]::Error.WriteLine("waste-hunter: $($_.Exception.Message)"); exit 2 }
+
 $accounts = @(Invoke-AzRead @('account', 'list', '--all'))
 $original = Invoke-AzRead @('account', 'show')
 $enabled  = @($accounts | Where-Object { $_.state -eq 'Enabled' })
@@ -739,6 +797,8 @@ try {
             # Confirm metric-based candidates ($CandidateTypes) in this tenant's context. A candidate
             # becomes 0..n findings; one the metrics show is in use is dropped. Ignored rows are kept
             # so they still count as excluded.
+            # Exclusions (tag or file) apply before the metric checks, so excluded candidates cost no az calls
+            foreach ($row in $passRows) { Set-Exclusion $row }
             $cands = @($passRows | Where-Object { $_.wasteType -in $CandidateTypes -and -not [bool] $_.ignored })
             if ($cands -and -not $SkipMetrics) { Write-Host "  checking $($cands.Count) candidate(s) against 30 days of metrics ..." }
             # Checks run -Parallel at a time; results come back in candidate order.
@@ -760,6 +820,8 @@ try {
                 foreach ($fnd in @($c.Value)) { if ($fnd) { $confirmed.Add($fnd); $st.flagged++ } }
             }
             $passRows = $confirmed
+            # ...and again after, for findings a check creates (an OpenAI deployment, Hot blobs on an account)
+            foreach ($row in $passRows) { Set-Exclusion $row }
 
             # Idle time for stopped VMs (needs this tenant's context)
             $vms = @($passRows | Where-Object { $_.wasteType -eq 'vm-stopped-not-deallocated' -and -not $_.ignored })
@@ -829,6 +891,10 @@ function Step-Confidence([string] $c) { @{ low = 'medium'; medium = 'high'; high
 
 $excluded = @{}
 foreach ($r in $rowsAll) { if ([bool] $r.ignored) { $excluded[$r.wasteType] = ($excluded[$r.wasteType] ?? 0) + 1 } }
+$excludedRows = @($rowsAll | Where-Object { [bool] $_.ignored })
+$exclByFile = @($excludedRows | Where-Object { (Get-Key $_ 'excludedBy') -eq 'file' }).Count
+foreach ($x in $ExpiredExclusions) { $warnings.Add("Exclusion for '$($x.Label)' expired on $($x.Until) ($($x.Reason)), so its findings are reported again. Extend or remove it in the exclusions file.") }
+foreach ($x in @($Exclusions | Where-Object { $_.Hits -eq 0 })) { $warnings.Add("Exclusion for '$($x.Label)' matched nothing in this scan (resource gone, out of scope, or a typo). Remove it if it's no longer needed.") }
 
 $live     = @($rowsAll | Where-Object { -not [bool] $_.ignored })
 # Deduplicated by waste type + ID (the finding key), so the same row seen twice collapses but two
@@ -1456,6 +1522,13 @@ foreach ($row in @($csvRows)) {
     }
 }
 $CsvHeader = '"rank","wasteType","wasteTypeLabel","name","resourceId","type","tenantId","subscriptionId","subscriptionName","resourceGroup","location","owner","app","env","createdTime","ageDays","idleDays","idleSource","sku","sizeGbOrInstances","monthlyCost","currency","costSource","advisorMonthlySavings","confidence","reason","suggestedAction","referenceCommandNotExecuted","portalUrl","status","firstSeen","ownerSource","commitmentCaveat"'
+# excluded.csv: what was left out and why, for the record (no cost: excluded resources aren't priced)
+$exclCsv = @(foreach ($x in $excludedRows) { [pscustomobject] [ordered] @{ wasteType = $x.wasteType; name = $x.name; resourceId = $x.id; subscriptionId = $x.subscriptionId
+    resourceGroup = $x.resourceGroup; excludedBy = (Get-Key $x 'excludedBy'); reason = (Get-Key $x 'excludeReason'); until = (Get-Key $x 'excludeUntil') } })
+foreach ($row in $exclCsv) { foreach ($prop in $row.PSObject.Properties) { if ($prop.Value -is [string] -and $prop.Value -match '^[=+\-@	
+]') { $prop.Value = "'" + $prop.Value } } }
+$exclPath = Join-Path $OutDir 'excluded.csv'
+if ($exclCsv) { $exclCsv | Export-Csv $exclPath -Encoding utf8 } else { Set-Content $exclPath '"wasteType","name","resourceId","subscriptionId","resourceGroup","excludedBy","reason","until"' -Encoding utf8 }
 $csvPath = Join-Path $OutDir 'findings.csv'
 @($csvRows) | Export-Csv $csvPath -Encoding utf8
 if (-not $csvRows) { Set-Content $csvPath $CsvHeader -Encoding utf8 }
@@ -1499,7 +1572,8 @@ L ''
 $highTotals = Get-Totals @($findings | Where-Object { $_.confidence -eq 'high' })
 L "High confidence: **$(Format-Money $highTotals)**. The rest needs a check before acting (see each finding's confidence and reason)."
 L ''
-L "$($findings.Count) finding(s) across $(@($groups | Where-Object { $_.Items.Count }).Count) waste type(s). $([int] $exclTotal) resource(s) excluded by ``waste-hunter:ignore=true``."
+$exclSource = $ExclusionsFile ? ('the exclusions file `{0}`' -f (Split-Path $ExclusionsFile -Leaf)) : 'an exclusions file (none used)'
+L "$($findings.Count) finding(s) across $(@($groups | Where-Object { $_.Items.Count }).Count) waste type(s). $([int] $exclTotal) resource(s) excluded ($([int] $exclTotal - $exclByFile) by the ``waste-hunter:ignore=true`` tag, $exclByFile by $exclSource; listed in ``excluded.csv``)."
 L ''
 L "Generated $($RunTime.ToString('yyyy-MM-dd HH:mm')) UTC. Scope: $ScopeLabel. **Read-only scan: nothing in Azure was changed.**"
 if ($FixtureDir) { L ''; L "> **SYNTHETIC DEMO DATA** loaded from ``$(Split-Path $FixtureDir -Leaf)``. No Azure calls were made and these resources are not real." }
@@ -1543,7 +1617,7 @@ else {
     L "| New since then | $($newItems.Count) | $(Format-GroupCost $newItems) |"
     L "| Still open | $($openItems.Count) | $(Format-GroupCost $openItems) |"
     L "| **Resolved** (gone, and rechecked this time) | $($resolved.Count) | $(Format-GroupCost (& $asItems $resolved)) |"
-    if ($nowExcluded) { L "| Now excluded by the ignore tag | $($nowExcluded.Count) | $(Format-GroupCost (& $asItems $nowExcluded)) |" }
+    if ($nowExcluded) { L "| Now excluded (ignore tag or exclusions file) | $($nowExcluded.Count) | $(Format-GroupCost (& $asItems $nowExcluded)) |" }
     if ($notRechecked) { L "| Not rechecked this time (scope, query or metric check incomplete) | $($notRechecked.Count) | $(Format-GroupCost (& $asItems $notRechecked)) |" }
     L ''
     if ($resolved) {
@@ -1680,7 +1754,7 @@ HL '<div class="tiles">'
 HL "<div class=""tile""><span>Estimated monthly savings</span><b>$(ConvertTo-HtmlText (Format-Money $totals))</b></div>"
 HL "<div class=""tile""><span>High confidence</span><b>$(ConvertTo-HtmlText (Format-Money $highTotals))</b></div>"
 HL "<div class=""tile""><span>Findings</span><b>$($findings.Count)</b></div>"
-HL "<div class=""tile""><span>Excluded by waste-hunter:ignore</span><b>$([int] $exclTotal)</b></div>"
+HL "<div class=""tile""><span>Excluded (tag or exclusions file)</span><b>$([int] $exclTotal)</b></div>"
 if ($prev) { HL "<div class=""tile""><span>Since last scan</span><b>$(@($findings | Where-Object { $_.status -eq 'new' }).Count) new &middot; $($resolved.Count) resolved</b></div>" }
 HL '</div>'
 

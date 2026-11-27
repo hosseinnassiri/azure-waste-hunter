@@ -196,6 +196,47 @@ try {
         foreach ($n in 'disk-keep-forensics', 'stkeepforaudit', 'vm-gpu-train') { Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is tagged ignore but was reported" }
         Assert ($base.Report -match '3 resource\(s\) excluded') 'excluded count should be 3'
     }
+    Test 'Exclusions file: ids, patterns, waste types, expiry and unused entries' {
+        $oai = (Get-Row $base 'oai-research/gpt-ptu-eval').resourceId
+        $excl = Join-Path $Work 'excl.json'
+        @{ exclusions = @(
+            @{ id = (Get-Row $base 'disk-temp-build').resourceId.ToUpper(); reason = 'build cache, recreated nightly' }               # case-insensitive
+            @{ pattern = '/subscriptions/*/resourceGroups/rg-sandbox/*'; wasteType = 'unassociated-public-ip'; reason = 'sandbox IPs are allowlisted by a partner'; until = '2099-12-31' }
+            @{ id = (Get-Row $base 'bas-dev').resourceId; reason = 'kept for incident response' }                                        # a metric-check candidate
+            @{ id = $oai; wasteType = @('idle-openai-deployment'); reason = 'PTU reserved for the Q1 launch' }                            # exists only after its check
+            @{ id = (Get-Row $base 'vm-win-jumpbox').resourceId; reason = 'old hold'; until = '2026-01-31' }                              # expired (fixture clock is 2026-11-26)
+            @{ id = '/subscriptions/0000/resourceGroups/rg-gone/providers/Microsoft.Compute/disks/disk-deleted'; reason = 'stale entry' }) } |
+            ConvertTo-Json -Depth 5 | Set-Content $excl
+        $r = Invoke-Run $Fixtures 'exclfile' @('-ExclusionsFile', $excl)
+        foreach ($n in 'disk-temp-build', 'pip-test-dyn', 'bas-dev', 'oai-research/gpt-ptu-eval') { Assert (-not ($r.Rows | Where-Object { $_.name -eq $n })) "$n should be excluded by the file" }
+        foreach ($n in 'lb-empty-scratch', 'asp-playground', 'vm-win-jumpbox', 'oai-research/gpt-4o-mini-support-ft') { Get-Row $r $n | Out-Null }   # same RG, other type / expired / other deployment
+        Assert ($r.Report -match '7 resource\(s\) excluded \(3 by the `waste-hunter:ignore=true` tag, 4 by the exclusions file `excl\.json`') 'excluded counts by source'
+        Assert ($r.Report -match "Exclusion for '[^']*vm-win-jumpbox' expired on 2026-01-31") 'expired exclusion should be reported'
+        Assert ($r.Report -match "Exclusion for '[^']*disk-deleted' matched nothing") 'unused exclusion should be reported'
+        $ex = @(Import-Csv (Join-Path $r.Dir 'excluded.csv'))
+        Assert-Equal 7 $ex.Count 'rows in excluded.csv'
+        Assert-Equal 'PTU reserved for the Q1 launch' (@($ex | Where-Object { $_.name -eq 'oai-research/gpt-ptu-eval' })[0].reason) 'reason recorded in excluded.csv'
+        Assert-Equal 'tag' (@($ex | Where-Object { $_.name -eq 'disk-keep-forensics' })[0].excludedBy) 'tag exclusions are listed too'
+        Assert-Equal 0 @($r.Rows | Where-Object { $_.wasteType -eq 'idle-bastion' }).Count 'bas-dev was the only idle Bastion'
+        Assert ($r.Report -match 'Idle Bastion hosts: 1 resource\(s\) checked') 'an excluded candidate must not be checked (only bas-prod)'
+    }
+    Test 'Exclusions file: the committed example is valid' {
+        $r = Invoke-Run $Fixtures 'exclexample' @('-ExclusionsFile', (Join-Path $SkillDir 'exclusions.example.json'))
+        Assert ($r.Report -match "Exclusion for '[^']*disk-forensics-2026' matched nothing") 'example entries load (and match nothing in the fixtures)'
+    }
+    Test 'Exclusions file: a malformed file stops the scan with the reason' {
+        foreach ($case in @(
+            @{ json = '{ "exclusions": [ { "id": "/subscriptions/x" } ] }'; error = 'needs a "reason"' }
+            @{ json = '{ "exclusions": [ { "id": "/x", "pattern": "/y*", "reason": "r" } ] }'; error = 'exactly one of "id" or "pattern"' }
+            @{ json = '{ "exclusions": [ { "id": "/x", "reason": "r", "until": "31/03/2027" } ] }'; error = 'must be a date like' }
+            @{ json = '[ { "id": "/x", "reason": "r" } ]'; error = 'top-level "exclusions" list' }
+            @{ json = '{ not json'; error = 'not valid JSON' })) {
+            $f = Join-Path $Work 'bad-excl.json'; Set-Content $f $case.json
+            $log = & pwsh -NoProfile -File $Runner -FixtureDir $Fixtures -OfflinePricing -OutDir (Join-Path $Work 'bad-excl-out') -ExclusionsFile $f 2>&1 | Out-String
+            Assert ($LASTEXITCODE -ne 0) "a malformed file must fail the run: $($case.json)"
+            Assert ($log.Contains($case.error)) "expected '$($case.error)' for $($case.json), got: $($log.Trim() -split "`n" | Select-Object -First 3)"
+        }
+    }
     Test 'Confidence: possible data stores and dependencies are low, never high' {
         Assert-Equal 'low' (Get-Row $base 'stgraphdata').confidence 'stgraphdata (Azure Files mount in the same RG)'
         Assert-Equal 'low' (Get-Row $base 'crgraphapps').confidence 'crgraphapps (referenced by a Container App)'
@@ -276,7 +317,7 @@ try {
         $r = Invoke-Run $fx '20261108-000000' @() $parent
         Assert ($r.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 1 \|') 'one resolved'
         Assert ($r.Report -match 'Resolved:\*\* pip-old-lb-frontend') 'pip-old-lb-frontend resolved'
-        Assert ($r.Report -match 'Now excluded by the ignore tag \| 1 \|') 'one now excluded'
+        Assert ($r.Report -match 'Now excluded \(ignore tag or exclusions file\) \| 1 \|') 'one now excluded'
         Assert ($r.Report -match 'Not rechecked this time [^|]*\| 2 \|') 'two snapshots not rechecked (failed query is not "resolved")'
         Assert-Equal 'new' (Get-Row $r 'rg-new').status 'new resource group status'
         Assert-Equal 'open' (Get-Row $r 'vm-win-jumpbox').status 'unchanged finding status'

@@ -1,0 +1,14 @@
+{
+  "exclusions": [
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sql-prod/providers/Microsoft.Compute/disks/disk-forensics-2026",
+      "reason": "Legal hold on incident 4711; owner: secops@example.com",
+      "until": "2027-03-31"
+    },
+    {
+      "pattern": "/subscriptions/*/resourceGroups/rg-dr-*/*",
+      "wasteType": ["unattached-disk", "old-snapshot"],
+      "reason": "DR seed disks and snapshots, reviewed quarterly by the platform team"
+    }
+  ]
+}

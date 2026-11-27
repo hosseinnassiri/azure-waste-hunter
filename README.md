@@ -99,7 +99,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-37 offline tests, with no Azure, no network and no dependencies:
+40 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
@@ -112,8 +112,21 @@ Windows on every push (`.github/workflows/tests.yml`).
 
 ## Excluding resources
 
-Tag a resource `waste-hunter:ignore=true` to skip it. Exclusions are counted in the report, not
-hidden silently.
+Tag a resource `waste-hunter:ignore=true` to skip it, or, without write access to tag, list it in
+`waste-hunter.exclusions.json` in the repo root (or pass `-ExclusionsFile <path>`):
+
+```json
+{ "exclusions": [
+  { "id": "/subscriptions/.../disks/disk-forensics-2026", "reason": "legal hold", "until": "2027-03-31" },
+  { "pattern": "/subscriptions/*/resourceGroups/rg-dr-*/*", "wasteType": ["unattached-disk"], "reason": "DR seeds" }
+] }
+```
+
+Each entry needs an exact `id` or a wildcard `pattern`, and a `reason`. `wasteType` and `until`
+(inclusive) are optional. Expired entries and entries that matched nothing show up as warnings, and a
+malformed file stops the scan. The file is gitignored because it names resource IDs. See
+`.claude/skills/waste-hunter/exclusions.example.json`. Exclusions are counted in the report and listed
+with their reason in `excluded.csv`, not hidden silently.
 
 ## How costs are estimated
 

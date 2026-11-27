@@ -52,9 +52,12 @@ expected finding set.
 
 ## 4. Features
 
-1. **Local exclusions file** (`exclusions.json`: ID or pattern, reason, expiry). Scanning needs only
-   Reader, but tagging needs write access, so many users can't exclude anything today. Also a
-   `waste-hunter:ignore-until=<date>` tag.
+1. **Local exclusions file** — done. `waste-hunter.exclusions.json` (gitignored, or `-ExclusionsFile`):
+   exact `id` or wildcard `pattern`, required `reason`, optional `wasteType` and `until`. Applied before
+   metric checks (no az calls for excluded candidates) and after (deployments, Hot blobs). Expired and
+   unused entries are reported; a malformed file stops the scan. `excluded.csv` lists every exclusion
+   (tag or file) with its reason. **Still to do:** a `waste-hunter:ignore-until=<date>` tag, which
+   needs the same change in all 19 queries and a live check (blocked until `resource-graph` is installed).
 2. **Configurable thresholds**: snapshot age (90 days), minimum age (30 days), Hot-blob size
    (100 GiB), Container Apps traffic (100 MiB).
 3. **Scheduled-scan template**: a GitHub Actions workflow that signs in through OIDC with a
@@ -68,5 +71,5 @@ expected finding set.
 
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
-3. Value: exclusions file, then DDoS, Firewall, all-stopped plans, orphaned backups.
+3. Value: exclusions file (done), then DDoS, Firewall, all-stopped plans, orphaned backups.
 4. Product: split the runner with one record per type (do this before most of section 3), scheduled CI, trends, MCA billing.

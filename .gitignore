@@ -1,2 +1,4 @@
 # Scan output contains real resource IDs, owners and costs
 reports/
+# Exclusions name real resource IDs. Remove this line to share them through a private repo.
+waste-hunter.exclusions.json

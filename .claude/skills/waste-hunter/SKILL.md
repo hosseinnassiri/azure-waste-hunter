@@ -107,8 +107,19 @@ section's total as an upper bound.
 
 ## Exclusions
 
-Any resource tagged `waste-hunter:ignore=true` (key and value case-insensitive) is skipped, including
-Advisor recommendations on that resource. The report shows how many were excluded for each waste type.
+Two ways, both counted per waste type in the report and listed with their reason in `excluded.csv`:
+
+- **The tag** `waste-hunter:ignore=true` (key and value case-insensitive) on the resource, including
+  Advisor recommendations on it. Needs write access to tag, so the user sets it, never you.
+- **The exclusions file** `waste-hunter.exclusions.json` in the repo root (or `-ExclusionsFile <path>`),
+  for users who can't tag. Format: `exclusions.example.json`. Each entry has `id` (exact) or `pattern`
+  (wildcards), a required `reason`, and optional `wasteType` (one or a list) and `until`
+  (`yyyy-MM-dd`, inclusive). Expired entries and entries that matched nothing are reported.
+
+When the user asks to exclude or ignore a finding, **edit the exclusions file** (a local file, so
+it doesn't break the read-only rule). Use the finding's resource ID and their reason, and ask for a reason if
+they gave none. Suggest an `until` date for temporary holds. Never tag the resource yourself. The
+file is gitignored because it names real resource IDs.
 
 ## Cost (monthly, per finding)
 

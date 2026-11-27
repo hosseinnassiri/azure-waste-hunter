@@ -52,6 +52,9 @@ Ask the user instead.
   Quiet is not the same as safe to delete.
 - Exclusion: queries compute `ignored` from the tag `waste-hunter:ignore=true` (case-insensitive) and
   the runner drops those rows and counts them. Don't filter them in KQL, or the excluded count is lost.
+  The exclusions file (`waste-hunter.exclusions.json`, gitignored) is applied by `Set-Exclusion`
+  before the metric checks and again after, for findings a check creates. To exclude something
+  for a user, edit that file. Never tag the resource.
 - Run queries from files: `az graph query -q @path/to/file.kql`. Passing KQL inline through
   `az.cmd` on Windows mangles double quotes. `//` comments in `.kql` files are fine.
 - Resource Graph returns booleans as `0`/`1`.
