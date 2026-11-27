@@ -7,7 +7,7 @@ deletes anything.**
 Ask Claude in this repo things like *"find waste in my tenant"*, *"cleanup candidates in
 subscription X"* or *"orphaned resources under management group Y"*. Or run the script directly.
 
-## What it finds (phase 1)
+## What it finds
 
 | # | Waste type | How |
 |---|---|---|
@@ -92,7 +92,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-28 offline tests, with no Azure, no network and no dependencies:
+33 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
@@ -111,7 +111,9 @@ hidden silently.
 ## How costs are estimated
 
 In order of preference, with the source shown per finding:
-1. **billed**: actual cost over the last 30 days (`az consumption usage list`), scaled to 30 days
+1. **billed**: actual cost over the last 30 days (`az consumption usage list`), scaled to 30 days.
+   Not used when the fix saves only part of the bill (a tier change, or Log Analytics retention only).
+   Those findings use the price difference instead.
 2. **advisor**: Azure Advisor's monthly savings figure
 3. **estimated**: pay-as-you-go list price **in the resource's own region**, in `-Currency`, from
    the public [Azure Retail Prices API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
@@ -163,12 +165,12 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
   queries/01..19-*.kql                      one Resource Graph query per waste type (08-12, 16-18: metric-confirmed candidates)
-  scripts/rg-owners.kql                     resource group owner tags (owner fallback)
-  tests/Test-WasteHunt.ps1                  offline test suite
-.github/workflows/tests.yml                 runs the tests on every push
   scripts/Invoke-WasteHunt.ps1              runner: scan, idle time, cost, merge, rank, report
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
+  scripts/rg-owners.kql                     resource group owner tags (owner fallback)
   scripts/pricing.json                      fallback list prices
-  tests/fixtures/, New-Fixtures.ps1         synthetic offline demo data
+  tests/Test-WasteHunt.ps1                  offline test suite
+  tests/fixtures/, New-Fixtures.ps1         synthetic offline demo data (clock.json: the time it was generated)
   tests/sample-output/                      report generated from that data
+.github/workflows/tests.yml                 runs the tests on every push
 ```

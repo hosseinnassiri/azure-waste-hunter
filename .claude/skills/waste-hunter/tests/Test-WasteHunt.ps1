@@ -132,6 +132,29 @@ try {
             Assert ($p -in $deny) "missing deny rule $p"
         }
     }
+    Test 'Settings: deny rules block writes, secrets and shells but never the allowed reads' {
+        $deny = @((Get-Content (Join-Path $RepoDir '.claude/settings.json') -Raw | ConvertFrom-Json).permissions.deny)
+        # A rule's * matches any text, spaces included
+        $rx = @($deny | Where-Object { $_ -like 'Bash(*)' } | ForEach-Object { '^' + ([regex]::Escape($_.Substring(5, $_.Length - 6)) -replace '\\\*', '.*') + '$' })
+        $blocked = { param($cmd) @($rx | Where-Object { $cmd -match $_ }).Count -gt 0 }
+        $reads = @(
+            'az graph query -q @C:/repo/.claude/skills/waste-hunter/queries/01-unattached-disks.kql --first 5 --query count -o tsv'
+            'az monitor metrics list --resource /subscriptions/0000/resourceGroups/rg-backup-restore/providers/Microsoft.Compute/virtualMachines/vm-setup --metric "Percentage CPU" --interval P1D --aggregation Maximum'
+            'az advisor recommendation list --category Cost'
+            'az consumption usage list --subscription 0000 --start-date 2026-10-27 --end-date 2026-11-26'
+            'az cognitiveservices account deployment list -g rg-ml -n oai-research --subscription 0000'
+            'az account show', 'az account list --all', 'az account set --subscription 0000-1111'
+            'az extension show -n resource-graph', 'az extension add -n resource-graph')     # add: local CLI change, asked first (SKILL.md)
+        foreach ($c in $reads) { Assert (-not (& $blocked $c)) "deny rules block an allowed read: $c" }
+        $writes = @(
+            'az webapp config appsettings set -g rg -n app --settings X=1', 'az keyvault set-policy -n kv --upn x', 'az network nic ip-config add -g rg --nic-name n -n c'
+            'az vm identity assign -g rg -n vm', 'az acr import -n cr --source x', 'az vm disk attach -g rg --vm-name vm --name d', 'az webapp deployment slot swap -g rg -n app --slot s'
+            'az sql db restore -g rg -s srv -n db', 'az aks upgrade -g rg -n aks', 'az webapp up', 'az webapp deploy -g rg -n app --src-path x.zip', 'az containerapp secret list -g rg -n ca --show-values'
+            'az storage account keys renew -g rg -n st --key primary', 'az cosmosdb keys regenerate -g rg -n db --key-kind primary', 'az storage blob upload -f x -c c -n n'
+            'az storage blob download -c c -n n -f x', 'az containerapp exec -g rg -n ca', 'az ssh vm -g rg -n vm', 'az network bastion ssh -n bas -g rg --target-resource-id x')
+        foreach ($c in $writes) { Assert (& $blocked $c) "deny rules do not block: $c" }
+        foreach ($b in @($deny | Where-Object { $_ -like 'Bash(*)' })) { Assert ("PowerShell$($b.Substring(4))" -in $deny) "no PowerShell twin for $b" }
+    }
     Test 'Pricing: pricing.json parses and has every section the runner reads' {
         $p = Get-Content (Join-Path $SkillDir 'scripts/pricing.json') -Raw | ConvertFrom-Json -AsHashtable
         foreach ($k in 'disks', 'snapshotsPerGb', 'publicIps', 'appServicePlans', 'containerApps', 'storagePerGb', 'containerRegistries', 'openAI', 'network', 'sqlDatabase', 'vms') {
@@ -261,9 +284,74 @@ try {
         Assert ($r.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'no resolved findings expected'
         Assert (@($r.Rows | Where-Object { $_.status -ne 'open' }).Count -eq 0) 'every finding should be open'
     }
+    Test 'Changes: a failed check on one resource does not hide another whose ID it prefixes' {
+        $parent = Join-Path $Work 'prefix'
+        $fx1 = Copy-Fixtures 'prefix1'
+        Edit-Fixture $fx1 '09-log-analytics-workspaces.json' { param($d) foreach ($x in $d) { if ($x.name -eq 'log-app-prod') { $x.checkInputs.retention = 90 } }; $d }
+        Invoke-Run $fx1 '20261101-000000' @() $parent | Out-Null
+        # log-app-prod is gone; workspace 'log-app' (a prefix of its ID) fails its check
+        $fx2 = Copy-Fixtures 'prefix2'
+        Edit-Fixture $fx2 '09-log-analytics-workspaces.json' { param($d)
+            $bad = $d | Where-Object { $_.name -eq 'log-app-prod' } | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+            $bad.name = 'log-app'; $bad.id = $bad.id -replace 'log-app-prod$', 'log-app'; $bad.checkInputs.retention = 'not-a-number'
+            @($d | Where-Object { $_.name -ne 'log-app-prod' }) + $bad }
+        $r = Invoke-Run $fx2 '20261108-000000' @() $parent
+        Assert ($r.Report -match "Couldn't check log-app ") 'log-app check should have failed'
+        Assert ($r.Report -match 'Resolved:\*\* [^\n]*log-app-prod') 'log-app-prod should be resolved, not "not rechecked"'
+    }
+    Test 'Keys: two waste types on one resource are both kept; Advisor merges once; exact duplicates collapse' {
+        $fx = Copy-Fixtures 'keys'
+        Edit-Fixture $fx '19-empty-resource-groups.json' { param($d)
+            $asp = Get-Content (Join-Path $fx '04-empty-app-service-plans.json') -Raw | ConvertFrom-Json | Where-Object { $_.name -eq 'asp-legacy-api' }
+            $other = $asp | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $other.wasteType = 'empty-resource-group'
+            @($d) + $other + ($d[0] | ConvertTo-Json -Depth 8 | ConvertFrom-Json) }       # plus an exact duplicate of rg-old-poc
+        $r = Invoke-Run $fx 'keys'
+        $asp = @($r.Rows | Where-Object { $_.name -eq 'asp-legacy-api' })
+        Assert-Equal 'empty-app-service-plan, empty-resource-group' (@($asp | ForEach-Object { $_.wasteType } | Sort-Object) -join ', ') 'waste types on asp-legacy-api'
+        Assert-Equal 1 @($asp | Where-Object { $_.reason -match 'corroborated by Advisor' }).Count 'findings that merged the Advisor recommendation'
+        Assert-Equal 1 @($r.Rows | Where-Object { $_.name -eq 'rg-old-poc' }).Count 'rg-old-poc after an exact duplicate row'
+    }
     Test 'Changes: -Compare none skips the comparison' {
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')
         Assert ($r.Report -match 'this report is the baseline') '-Compare none should not compare'
+    }
+    Test 'Costs: a partial saving (tier change, retention only) never reports the whole bill as the saving' {
+        $fx = Copy-Fixtures 'partial'
+        # log-app-prod: queried, but 90-day retention, so a retention-only finding
+        Edit-Fixture $fx '09-log-analytics-workspaces.json' { param($d) foreach ($x in $d) { if ($x.name -eq 'log-app-prod') { $x.checkInputs.retention = 90 } }; $d }
+        $billedNames = 'vm-retired-app_OsDisk', 'stmediaarchive', 'crplatform', 'log-app-prod', 'log-security-archive', 'crlegacybuild'
+        $ids = @{ 'log-app-prod' = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-app-prod' }
+        foreach ($n in $billedNames) { if (-not $ids[$n]) { $ids[$n] = (Get-Row $base $n).resourceId } }
+        $clock = [DateTime]::Parse((Get-Content (Join-Path $fx 'clock.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String)['now'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+        Edit-Fixture $fx 'consumption.json' { param($d)
+            $add = foreach ($n in $billedNames) { foreach ($i in 1..30) {
+                [pscustomobject] @{ instanceId = $ids[$n]; pretaxCost = 10.0; currency = 'USD'; usageStart = $clock.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') } } }
+            @($d) + @($add) }
+        $r = Invoke-Run $fx 'partial'
+        foreach ($n in 'vm-retired-app_OsDisk', 'stmediaarchive', 'crplatform') {
+            $row = Get-Row $r $n
+            Assert-Equal (Get-Row $base $n).monthlyCost $row.monthlyCost "$n saving (must stay the tier-change estimate, not the 300.00 bill)"
+            Assert ($row.costSource -like 'estimated*' -and $row.costSource -match 'whole resource billed 300\.00 USD') "$n cost source should be an estimate noting the whole bill: $($row.costSource)"
+        }
+        $lawRetention = Get-Row $r 'log-app-prod'
+        Assert-Equal '' $lawRetention.monthlyCost 'retention-only workspace saving (unknown, not the whole bill)'
+        Assert ($lawRetention.costSource -match 'whole resource billed 300\.00 USD') 'retention-only workspace should note the whole bill'
+        # Full savings (delete the registry, stop the unqueried data) still use the bill
+        foreach ($n in 'crlegacybuild', 'log-security-archive') {
+            Assert-Equal '300' (Get-Row $r $n).monthlyCost "$n billed saving"
+            Assert ((Get-Row $r $n).costSource -like 'billed*') "$n should use billed cost"
+        }
+    }
+    Test 'Clock: fixture data is judged against clock.json, not the system clock (stale-fixture regression)' {
+        $fx = Copy-Fixtures 'clock'
+        $c = Get-Content (Join-Path $fx 'clock.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+        $t = [DateTime]::Parse($c['now'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+        Set-Content (Join-Path $fx 'clock.json') (@{ now = $t.AddDays(10).ToString('o') } | ConvertTo-Json)
+        $before = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+        $r = Invoke-Run $fx 'clock'
+        $after = [DateTime]::UtcNow.ToString('yyyy-MM-dd')                # the run may cross midnight
+        Assert-Equal '57' (Get-Row $r 'vm-build-agent-02').idleDays 'idle days 10 days after the fixture clock'
+        Assert ($r.Report -match "Generated ($before|$after)") 'report timestamp must be the real run time, not the fixture clock'
     }
     Test 'Output safety: HTML-escapes and neutralizes CSV formulas in tag values' {
         $fx = Copy-Fixtures 'hostile'

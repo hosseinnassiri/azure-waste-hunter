@@ -5,6 +5,9 @@ $T = '00000000-0000-0000-0000-00000000demo'
 $P = '11111111-1111-1111-1111-111111111111'   # demo-prod
 $D = '22222222-2222-2222-2222-222222222222'   # demo-dev
 $now = [DateTime]::UtcNow
+# Every timestamp below is absolute. The runner judges fixture data against this clock, not the
+# system clock, so the committed fixtures don't drift a day each day.
+Set-Content (Join-Path $Out 'clock.json') (@{ now = $now.ToString('o') } | ConvertTo-Json) -Encoding utf8
 function Ago([int] $d) { $now.AddDays(-$d).ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ') }
 function Rid($sub, $rg, $prov, $name) { "/subscriptions/$sub/resourceGroups/$rg/providers/$prov/$name" }
 function Row($wt, $sub, $rg, $prov, $name, $loc, [hashtable] $x) {
