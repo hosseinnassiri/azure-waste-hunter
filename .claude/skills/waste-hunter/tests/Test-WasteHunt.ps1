@@ -32,47 +32,46 @@ $AllSource = (@($ScriptFiles | ForEach-Object { Get-Content $_.FullName -Raw }) 
 $Work     = Join-Path ([IO.Path]::GetTempPath()) ("waste-hunter-tests-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $Work | Out-Null
 
+. (Join-Path $TestsDir 'TestHelpers.ps1')   # Assert, Invoke-Run, Copy-BaseRun, Get-Row, Copy-Fixtures, ...
+
+# Static tests run as they're declared. Tests declared after the base run (they read it, and most run
+# the runner again, ~11 s each) are queued and run in parallel workers by Invoke-QueuedTests, which
+# prints them in declaration order. Tests sharing a -Group run in one worker, in order: use it when one
+# test depends on another's folder.
 $script:Passed = 0; $script:Failed = [Collections.Generic.List[string]]::new()
-function Test([string] $Name, [scriptblock] $Body) {
+$script:Queue = [Collections.Generic.List[object]]::new(); $script:QueueTests = $false
+function Test([string] $Name, [scriptblock] $Body, [string] $Group) {
+    if ($script:QueueTests) {
+        $i = $script:Queue.Count
+        $script:Queue.Add([pscustomobject] @{ I = $i; Name = $Name; Body = $Body.ToString(); Group = ($Group ? $Group : "test-$i") })
+        return
+    }
     try { & $Body; $script:Passed++; Write-Host "  ok    $Name" -ForegroundColor Green }
     catch { $script:Failed.Add("$Name :: $($_.Exception.Message)"); Write-Host "  FAIL  $Name`n        $($_.Exception.Message)" -ForegroundColor Red }
 }
-function Assert([bool] $Cond, [string] $Msg) { if (-not $Cond) { throw $Msg } }
-function Assert-Equal($Expected, $Actual, [string] $What) { if ("$Expected" -ne "$Actual") { throw "$What`: expected [$Expected], got [$Actual]" } }
-
-# Run the runner on a fixture folder; returns the report folder's parsed outputs
-# Each run gets its own parent folder, so runs never compare against each other unless a test passes
-# a shared -Parent on purpose (the "Changes" tests).
-function Invoke-Run([string] $FixtureDir, [string] $Name, [string[]] $Extra = @(), [string] $Parent, [switch] $KeepParallel) {
-    if (-not $Parent) { $Parent = Join-Path $Work "run-$Name" }
-    $out = Join-Path $Parent $Name
-    # Fixture az calls answer instantly, so parallel metric checks only add runspace setup (about 6 s a
-    # run). Runs are sequential unless they ask otherwise. The base run and the retry runs keep the
-    # default, and 'Parallel: ...' compares the base run with a sequential one, so a variable missing
-    # from Invoke-InParallel's $vars still fails the suite.
-    if (-not $KeepParallel -and $Extra -notcontains '-Parallel') { $Extra = @($Extra) + @('-Parallel', '1') }
-    $log = & pwsh -NoProfile -File $Runner -FixtureDir $FixtureDir -OfflinePricing -OutDir $out @Extra 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "runner exited $LASTEXITCODE`n$($log | Select-Object -Last 15 | Out-String)" }
-    return [pscustomobject] @{
-        Dir = $out; Log = ($log | Out-String)
-        Report = Get-Content (Join-Path $out 'report.md') -Raw
-        Html = Get-Content (Join-Path $out 'report.html') -Raw
-        Rows = @(Import-Csv (Join-Path $out 'findings.csv'))
-        Json = Get-Content (Join-Path $out 'findings.json') -Raw | ConvertFrom-Json -AsHashtable
+function Invoke-QueuedTests([hashtable] $Vars) {
+    if (-not $script:Queue.Count) { return }
+    # Each worker runs one runner process at a time, so about half the logical CPUs (2 to 6)
+    $workers = [Math]::Max(2, [Math]::Min(6, [int] [Math]::Floor([Environment]::ProcessorCount / 2)))
+    Write-Host "Scenario tests ($($script:Queue.Count), $workers at a time)"
+    $groups = @($script:Queue | Group-Object Group | ForEach-Object { , @($_.Group) })
+    $helpers = Join-Path $TestsDir 'TestHelpers.ps1'
+    $results = @($groups | ForEach-Object -ThrottleLimit $workers -Parallel {
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
+        foreach ($kv in ($using:Vars).GetEnumerator()) { Set-Variable -Name $kv.Key -Value $kv.Value }
+        . $using:helpers
+        foreach ($t in $_) {
+            # A script block belongs to the runspace that made it, so each test is rebuilt from its text here
+            try { & ([scriptblock]::Create($t.Body)); [pscustomobject] @{ I = $t.I; Name = $t.Name; Error = $null } }
+            catch { [pscustomobject] @{ I = $t.I; Name = $t.Name; Error = $_.Exception.Message } }
+        }
+    })
+    Assert-Equal $script:Queue.Count $results.Count 'queued tests that reported a result'
+    foreach ($r in @($results | Sort-Object I)) {
+        if (-not $r.Error) { $script:Passed++; Write-Host "  ok    $($r.Name)" -ForegroundColor Green }
+        else { $script:Failed.Add("$($r.Name) :: $($r.Error)"); Write-Host "  FAIL  $($r.Name)`n        $($r.Error)" -ForegroundColor Red }
     }
-}
-function Get-Row($run, [string] $name) {
-    $r = @($run.Rows | Where-Object { $_.name -eq $name })
-    Assert ($r.Count -eq 1) "expected exactly one finding named '$name', found $($r.Count)"
-    return $r[0]
-}
-# Copy the fixtures so a test can change them without touching the committed ones
-function Copy-Fixtures([string] $Name) { $d = Join-Path $Work "fx-$Name"; Copy-Item -Recurse $Fixtures $d; return $d }
-function Edit-Fixture([string] $Dir, [string] $File, [scriptblock] $Change) {
-    $p = Join-Path $Dir $File
-    $data = @(Get-Content $p -Raw | ConvertFrom-Json)
-    $data = @(& $Change $data)
-    ConvertTo-Json -InputObject $data -Depth 12 | Set-Content $p
 }
 
 try {
@@ -277,6 +276,7 @@ try {
 
     Write-Host 'Full run on synthetic fixtures (offline pricing)'
     $base = Invoke-Run $Fixtures 'base' -KeepParallel
+    $script:QueueTests = $true   # from here on, tests are queued and run in parallel (Invoke-QueuedTests)
     $expected = @(
         'advisor-cost|demo-prod', 'empty-app-service-plan|asp-legacy-api', 'empty-app-service-plan|asp-playground',
         'empty-app-service-plan|asp-reports-weu', 'empty-resource-group|rg-old-poc', 'hot-blob-unread|stmediaarchive', 'idle-application-gateway|agw-legacy-portal',
@@ -472,7 +472,6 @@ try {
         Assert (@($base.Rows | Where-Object { $_.status -ne 'baseline' }).Count -eq 0) 'all statuses should be baseline'
     }
 
-    Write-Host 'Scenario runs'
     Test 'Coverage: an unreadable subscription makes the tenant partial, never clean' {
         $fx = Copy-Fixtures 'coverage'
         Edit-Fixture $fx 'coverage-check.json' { param($d) @($d | Where-Object { $_.name -ne 'demo-dev' }) }
@@ -496,9 +495,9 @@ try {
         Assert (-not ($r.Rows | Where-Object { $_.wasteType -in $cand })) 'candidate types must be absent'
         Assert ($r.Report -match 'not checked because of -SkipMetrics') 'missing -SkipMetrics warning'
     }
-    Test 'Changes: resolved, new, excluded and not-rechecked are told apart' {
+    Test 'Changes: resolved, new, excluded and not-rechecked are told apart' -Group 'history' {
         $parent = Join-Path $Work 'history'
-        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        Copy-BaseRun $parent '20261101-000000' | Out-Null
         $fx = Copy-Fixtures 'history'
         Edit-Fixture $fx '03-unassociated-public-ips.json' { param($d) @($d | Where-Object { $_.name -ne 'pip-old-lb-frontend' }) }
         Edit-Fixture $fx '13-idle-load-balancers.json' { param($d) foreach ($x in $d) { if ($x.name -eq 'lb-old-web') { $x.ignored = 1 } }; $d }
@@ -516,7 +515,7 @@ try {
         # Query 22 emits orphaned-vm-backup and orphaned-workload-backup through iff(); the runner must
         # read both names from it, or a failure would report the workload backup as resolved
         $parent = Join-Path $Work 'two-types'
-        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        Copy-BaseRun $parent '20261101-000000' | Out-Null
         $fx = Copy-Fixtures 'two-types'
         Set-Content (Join-Path $fx '22-orphaned-vm-backups.json') 'not json'
         $r = Invoke-Run $fx '20261108-000000' @() $parent
@@ -525,7 +524,7 @@ try {
     }
     Test 'Changes: a second scan where nothing changed works (empty lists must not crash)' {
         $parent = Join-Path $Work 'stable'
-        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        Copy-BaseRun $parent '20261101-000000' | Out-Null
         $r = Invoke-Run $Fixtures '20261108-000000' @() $parent
         Assert ($r.Report -match 'New since then \| 0 \|') 'no new findings expected'
         Assert ($r.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'no resolved findings expected'
@@ -558,13 +557,7 @@ try {
         Assert-Equal 1 @($asp | Where-Object { $_.reason -match 'corroborated by Advisor' }).Count 'findings that merged the Advisor recommendation'
         Assert-Equal 1 @($r.Rows | Where-Object { $_.name -eq 'rg-old-poc' }).Count 'rg-old-poc after an exact duplicate row'
     }
-    # Retry and caching. Fixture faults (faults.json) make the first N matching az calls fail with a
-    # given stderr, which exercises the same retry path a real az error takes.
-    function Set-Faults([string] $Dir, [object[]] $Faults) { ConvertTo-Json -InputObject @($Faults) -Depth 5 | Set-Content (Join-Path $Dir 'faults.json') }
-    function Get-AzStats($run) {
-        Assert ($run.Report -match 'az calls: (\d+), (\d+) retried.*?, (\d+) metric read') 'az calls line missing from the report'
-        return @{ Calls = [int] $Matches[1]; Retried = [int] $Matches[2]; Cached = [int] $Matches[3] }
-    }
+    # Retry and caching (Set-Faults and Get-AzStats are in TestHelpers.ps1)
     $throttle = 'ERROR: (TooManyRequests) Too many requests. Please retry after 1 seconds. Code: RateLimiting'
     Test 'Retry: throttled and transient az errors are retried; sign-in errors are not; repeated metric reads are cached' {
         $fx = Copy-Fixtures 'retry'
@@ -621,7 +614,7 @@ try {
             if ($firstSeen) { foreach ($f in $j.findings) { $f.firstSeen = $now.AddDays(-$days).ToString('yyyy-MM-dd') } }
             foreach ($r in @($j.resolved)) { if ($r) { $r.resolvedOn = $now.AddDays(-$days).ToString('yyyy-MM-dd') } }
             $j | ConvertTo-Json -Depth 8 | Set-Content $p }
-        $r1 = Invoke-Run $Fixtures 'scan1' @() $parent
+        $r1 = Copy-BaseRun $parent 'scan1'
         & $backdate $r1.Dir 60 $true
         $fx2 = Copy-Fixtures 'trends2'
         Edit-Fixture $fx2 '03-unassociated-public-ips.json' { param($d) @($d | Where-Object { $_.name -ne 'pip-old-lb-frontend' }) }
@@ -644,7 +637,7 @@ try {
         Assert ($r3.Html -match '<h2>Trends</h2>') 'trends missing from the HTML'
         Assert (-not ($r1.Report -match '## Trends')) 'a baseline scan has no trends'
     }
-    Test 'Changes: -Compare none skips the comparison' {
+    Test 'Changes: -Compare none skips the comparison' -Group 'history' {   # after the test above: its scans are in 'history'
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')
         Assert ($r.Report -match 'this report is the baseline') '-Compare none should not compare'
     }
@@ -717,7 +710,7 @@ try {
         Assert ($r.Report -match 'Reservation orders checked: 2 ') 'both orders tried'
         # A later scan that doesn't see the order (no usage read) must not call its finding resolved
         $parent = Join-Path $Work 'res-history'
-        Invoke-Run $Fixtures '20261101-000000' @() $parent | Out-Null
+        Copy-BaseRun $parent '20261101-000000' | Out-Null
         $r2 = Invoke-Run $Fixtures '20261108-000000' @('-SkipConsumption') $parent
         Assert ($r2.Report -match 'Reservation orders checked: 0 ') 'no usage read, so no order found'
         Assert ($r2.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'an unchecked reservation is not resolved'
@@ -752,6 +745,9 @@ try {
         Assert ($r.Report -match 'No exchange rate available for USD to CAD') 'missing approximate-order warning'
         Assert ($r.Report -match 'USD \+ [\d,.]+ CAD|CAD \+ [\d,.]+ USD') 'totals must stay per currency'
     }
+
+    Invoke-QueuedTests @{ Work = $Work; Fixtures = $Fixtures; Runner = $Runner; SkillDir = $SkillDir; RepoDir = $RepoDir; TestsDir = $TestsDir
+                          base = $base; expected = $expected; throttle = $throttle }
 }
 finally {
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue

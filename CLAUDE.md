@@ -140,11 +140,17 @@ Ask the user instead.
   them with the invocation arguments ("Cost $0" was rendered as "Cost -AllTenants").
 - In the runner, don't `return , $array` from a function whose result is piped or `@()`-wrapped.
   That nests the array and turns every `Where-Object` into a match-all.
+- The test suite runs every test declared after its base run in parallel workers (`Invoke-QueuedTests`),
+  about 6 at a time, each in a fresh runspace that loads `tests/TestHelpers.ps1`. Such a test sees only
+  the variables passed to `Invoke-QueuedTests` (add any new one there, or it's unset under strict mode),
+  and must use its own folders under `$Work`. Tests that depend on each other's folders share a `-Group`
+  and run in order in one worker (the two `history` tests). A first scan of the unmodified fixtures is
+  `Copy-BaseRun`, not a new run.
 
 ## Validating changes
 
 **Run the test suite before every commit.** It must pass:
-`pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` (offline, about 7-8 minutes; CI runs it
+`pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` (offline, about 3-4 minutes; CI runs it
 too). A new waste type needs fixture cases it must flag and cases it must drop, plus an entry in the
 suite's expected finding set. A bug fix needs a test that fails without it.
 
