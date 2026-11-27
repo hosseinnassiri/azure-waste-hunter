@@ -265,6 +265,44 @@ try {
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')
         Assert ($r.Report -match 'this report is the baseline') '-Compare none should not compare'
     }
+    Test 'Costs: a partial saving (tier change, retention only) never reports the whole bill as the saving' {
+        $fx = Copy-Fixtures 'partial'
+        # log-app-prod: queried, but 90-day retention, so a retention-only finding
+        Edit-Fixture $fx '09-log-analytics-workspaces.json' { param($d) foreach ($x in $d) { if ($x.name -eq 'log-app-prod') { $x.checkInputs.retention = 90 } }; $d }
+        $billedNames = 'vm-retired-app_OsDisk', 'stmediaarchive', 'crplatform', 'log-app-prod', 'log-security-archive', 'crlegacybuild'
+        $ids = @{ 'log-app-prod' = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-app-prod' }
+        foreach ($n in $billedNames) { if (-not $ids[$n]) { $ids[$n] = (Get-Row $base $n).resourceId } }
+        $clock = [DateTime]::Parse((Get-Content (Join-Path $fx 'clock.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String)['now'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+        Edit-Fixture $fx 'consumption.json' { param($d)
+            $add = foreach ($n in $billedNames) { foreach ($i in 1..30) {
+                [pscustomobject] @{ instanceId = $ids[$n]; pretaxCost = 10.0; currency = 'USD'; usageStart = $clock.AddDays(-$i).ToString('yyyy-MM-ddT00:00:00Z') } } }
+            @($d) + @($add) }
+        $r = Invoke-Run $fx 'partial'
+        foreach ($n in 'vm-retired-app_OsDisk', 'stmediaarchive', 'crplatform') {
+            $row = Get-Row $r $n
+            Assert-Equal (Get-Row $base $n).monthlyCost $row.monthlyCost "$n saving (must stay the tier-change estimate, not the 300.00 bill)"
+            Assert ($row.costSource -like 'estimated*' -and $row.costSource -match 'whole resource billed 300\.00 USD') "$n cost source should be an estimate noting the whole bill: $($row.costSource)"
+        }
+        $lawRetention = Get-Row $r 'log-app-prod'
+        Assert-Equal '' $lawRetention.monthlyCost 'retention-only workspace saving (unknown, not the whole bill)'
+        Assert ($lawRetention.costSource -match 'whole resource billed 300\.00 USD') 'retention-only workspace should note the whole bill'
+        # Full savings (delete the registry, stop the unqueried data) still use the bill
+        foreach ($n in 'crlegacybuild', 'log-security-archive') {
+            Assert-Equal '300' (Get-Row $r $n).monthlyCost "$n billed saving"
+            Assert ((Get-Row $r $n).costSource -like 'billed*') "$n should use billed cost"
+        }
+    }
+    Test 'Clock: fixture data is judged against clock.json, not the system clock (stale-fixture regression)' {
+        $fx = Copy-Fixtures 'clock'
+        $c = Get-Content (Join-Path $fx 'clock.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+        $t = [DateTime]::Parse($c['now'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+        Set-Content (Join-Path $fx 'clock.json') (@{ now = $t.AddDays(10).ToString('o') } | ConvertTo-Json)
+        $before = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+        $r = Invoke-Run $fx 'clock'
+        $after = [DateTime]::UtcNow.ToString('yyyy-MM-dd')                # the run may cross midnight
+        Assert-Equal '57' (Get-Row $r 'vm-build-agent-02').idleDays 'idle days 10 days after the fixture clock'
+        Assert ($r.Report -match "Generated ($before|$after)") 'report timestamp must be the real run time, not the fixture clock'
+    }
     Test 'Output safety: HTML-escapes and neutralizes CSV formulas in tag values' {
         $fx = Copy-Fixtures 'hostile'
         Edit-Fixture $fx '02-orphaned-nics.json' { param($d) $d[0].owner = '=HYPERLINK("x")<script>alert(1)</script>'; $d }

@@ -50,9 +50,21 @@ if ($Tenant)       { $Tenant       = @($Tenant       | ForEach-Object { $_ -spli
 $SkillDir = Split-Path -Parent $PSScriptRoot
 $QueryDir = Join-Path $SkillDir 'queries'
 $Pricing  = Get-Content (Join-Path $PSScriptRoot 'pricing.json') -Raw | ConvertFrom-Json -AsHashtable
-$Now      = [DateTime]::UtcNow
-if (-not $OutDir) { $OutDir = Join-Path (Get-Location) (Join-Path 'reports' $Now.ToString('yyyyMMdd-HHmmss')) }
-if ($FixtureDir) { $FixtureDir = (Resolve-Path $FixtureDir).Path }
+# Two clocks. $RunTime is when this scan ran: report timestamps, baseline ordering, firstSeen.
+# $Now is the clock the data is judged against: metric windows, idle days, ages. They're the same
+# for a real scan. Fixture timestamps are absolute, written when New-Fixtures.ps1 ran, so in fixture
+# mode $Now is that generation time (clock.json). Otherwise idle days drift by one every day and the
+# committed fixtures go stale.
+$RunTime  = [DateTime]::UtcNow
+$Now      = $RunTime
+if (-not $OutDir) { $OutDir = Join-Path (Get-Location) (Join-Path 'reports' $RunTime.ToString('yyyyMMdd-HHmmss')) }
+if ($FixtureDir) {
+    $FixtureDir = (Resolve-Path $FixtureDir).Path
+    $clockFile = Join-Path $FixtureDir 'clock.json'
+    if (-not (Test-Path $clockFile)) { throw "Fixture folder has no clock.json (the fixture generation time). Regenerate it with tests/New-Fixtures.ps1." }
+    $Now = [DateTime]::Parse((Get-Content $clockFile -Raw | ConvertFrom-Json -AsHashtable -DateKind String)['now'],
+                             [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles] 'AdjustToUniversal, AssumeUniversal')
+}
 
 # ---------------------------------------------------------------------------------------------
 # Read-only guard
@@ -334,9 +346,11 @@ function Confirm-Candidate($r) {
             }
             if (-not $problems) { return @() }
             $why = ($problems -join '; ') + '. Cost depends on GB ingested and retained, which platform metrics do not expose (see the workspace''s Usage and estimated costs page).'
-            if ($problems.Count -eq 1 -and $problems[0] -like 'retention*') { $why += ' Longer retention may be a compliance requirement.' }
+            $retentionOnly = $problems.Count -eq 1 -and $problems[0] -like 'retention*'
+            if ($retentionOnly) { $why += ' Longer retention may be a compliance requirement.' }
+            # Retention only: lowering it saves the retention charge, not the workspace's whole bill
             return @(New-FindingFrom $r @{ confidence = $conf; reason = $why; idleDays = $null; idleSource = 'Ingestion Volume/Query Count metrics, 30 days'
-                                           records = $records; queries = $queries })
+                                           records = $records; queries = $queries; partialSaving = $retentionOnly })
         }
         'idle-storage-account' {
             if ($young) { return @() }
@@ -1083,6 +1097,10 @@ function Get-Action($f) {
 
 function Format-Day($v) { if (-not $v) { return '' }; try { [DateTimeOffset]::Parse([string] $v, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime.ToString('yyyy-MM-dd') } catch { [string] $v } }
 
+# Waste types whose saving is a tier change (a price difference), not the resource's whole bill.
+# Log Analytics findings for retention only are marked per finding (partialSaving).
+$PartialSavingTypes = @('premium-disk-deallocated-vm', 'hot-blob-unread', 'oversized-container-registry')
+
 # Waste types whose cost a reservation or savings plan can cover
 $CommitmentEligible = @('vm-stopped-not-deallocated', 'idle-openai-deployment', 'idle-sql-database', 'empty-app-service-plan',
                         'unattached-disk', 'premium-disk-deallocated-vm')
@@ -1122,7 +1140,12 @@ foreach ($r in @($detected) + @($advisor)) {
 
     # Cost order: billed, then Advisor, then list-price estimate
     # (An Advisor-only finding uses Advisor's savings figure. The resource's full bill is not what it saves.)
+    # A partial-saving finding (a tier change, or retention only) saves a delta, not the resource's
+    # whole bill, so its billed cost is context only and never the saving.
     $b = ($r.wasteType -ne 'advisor-cost') ? $billed[$key] : $null
+    $partial = ($r.wasteType -in $PartialSavingTypes) -or [bool] (Get-Key $f 'partialSaving')
+    $billedWhole = ($b -and $b.Days.Count -gt 0) ? @{ Cost = [math]::Round($b.Cost / $b.Days.Count * 30, 2); Currency = $b.Currency } : $null
+    if ($partial) { $b = $null }
     if ($b -and $b.Days.Count -gt 0) {
         $f.monthlyCost = [math]::Round($b.Cost / $b.Days.Count * 30, 2); $f.currency = $b.Currency
         $f.costSource = "billed (30-day actual, $($b.Days.Count) day(s) of usage)"
@@ -1145,6 +1168,9 @@ foreach ($r in @($detected) + @($advisor)) {
             elseif ($e.Cost -gt 0) { $f.costSource = "estimated ($($e.Note), pricing.json US East USD)"; $PriceStats.fallback++ }
             else { $f.costSource = "free ($($e.Note))"; $f.currency = $Currency }   # zero is zero in any currency
         }
+    }
+    if ($partial -and $billedWhole) {
+        $f.costSource += ' [whole resource billed {0:N2} {1}/month; this change saves only part of it]' -f $billedWhole.Cost, $billedWhole.Currency
     }
 
     # Reservations and savings plans: an estimated (list-price) saving on a type they can cover may
@@ -1200,7 +1226,7 @@ $groups = @($groups | Sort-Object @{ e = { $_.Items.Count -gt 0 }; Descending = 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutFull = (Resolve-Path $OutDir).Path
 function Get-FindingKey($f) { return "$($f.wasteType)|$(([string] $f.id).ToLower())" }
-$today = $Now.ToString('yyyy-MM-dd')
+$today = $RunTime.ToString('yyyy-MM-dd')
 $prev = $null; $prevDir = $null
 if ($Compare -ne 'none') {
     $candidates = if ($Compare -ne 'auto') { @(Get-Item $Compare -ErrorAction SilentlyContinue) }
@@ -1213,7 +1239,7 @@ if ($Compare -ne 'none') {
         $meta = Get-Key $j 'meta'
         if (-not $meta) { continue }
         if ($Compare -eq 'auto' -and ((Get-Key $meta 'scope') -ne $ScopeLabel -or [bool] (Get-Key $meta 'synthetic') -ne [bool] $FixtureDir)) { continue }
-        if ([string] (Get-Key $meta 'generated') -ge $Now.ToString('o')) { continue }
+        if ([string] (Get-Key $meta 'generated') -ge $RunTime.ToString('o')) { continue }
         if (-not $best -or [string] (Get-Key $meta 'generated') -gt [string] (Get-Key $best.meta 'generated')) { $best = @{ meta = $meta; json = $j; dir = $d.FullName } }
     }
     if ($best) { $prev = $best.json; $prevDir = $best.dir }
@@ -1309,7 +1335,7 @@ $ownerGroups = @(@($findings) | Group-Object { $_.owner ? ([string] $_.owner).Tr
 
 # Machine-readable record: the baseline for the next scan's "changes since last scan"
 $record = [ordered]@{
-    meta = [ordered]@{ generated = $Now.ToString('o'); scope = $ScopeLabel; currency = $Currency; synthetic = [bool] $FixtureDir
+    meta = [ordered]@{ generated = $RunTime.ToString('o'); scope = $ScopeLabel; currency = $Currency; synthetic = [bool] $FixtureDir
                        scannedSubscriptions = @($ScannedSubs) }
     findings = @(foreach ($i in $findings) { [ordered]@{ key = Get-FindingKey $i; wasteType = $i.wasteType; id = $i.id; name = $i.name
         subscriptionId = $i.subscriptionId; resourceGroup = $i.resourceGroup; owner = $i.owner
@@ -1332,7 +1358,7 @@ L "High confidence: **$(Format-Money $highTotals)**. The rest needs a check befo
 L ''
 L "$($findings.Count) finding(s) across $(@($groups | Where-Object { $_.Items.Count }).Count) waste type(s). $([int] $exclTotal) resource(s) excluded by ``waste-hunter:ignore=true``."
 L ''
-L "Generated $($Now.ToString('yyyy-MM-dd HH:mm')) UTC. Scope: $ScopeLabel. **Read-only scan: nothing in Azure was changed.**"
+L "Generated $($RunTime.ToString('yyyy-MM-dd HH:mm')) UTC. Scope: $ScopeLabel. **Read-only scan: nothing in Azure was changed.**"
 if ($FixtureDir) { L ''; L "> **SYNTHETIC DEMO DATA** loaded from ``$(Split-Path $FixtureDir -Leaf)``. No Azure calls were made and these resources are not real." }
 L ''
 L '| Waste type | Findings | Est. monthly | High | Medium | Low | Excluded |'
@@ -1500,7 +1526,7 @@ td.why { min-width: 260px; } td.act { min-width: 240px; }
 </style></head><body><main>
 '@
 HL '<h1>Azure waste report</h1>'
-HL "<div class=""muted"">Generated $(ConvertTo-HtmlText $Now.ToString('yyyy-MM-dd HH:mm')) UTC &middot; Scope: $(ConvertTo-HtmlText $ScopeLabel) &middot; <b>Read-only scan: nothing in Azure was changed.</b></div>"
+HL "<div class=""muted"">Generated $(ConvertTo-HtmlText $RunTime.ToString('yyyy-MM-dd HH:mm')) UTC &middot; Scope: $(ConvertTo-HtmlText $ScopeLabel) &middot; <b>Read-only scan: nothing in Azure was changed.</b></div>"
 if ($FixtureDir) { HL '<div class="banner"><b>Synthetic demo data.</b> No Azure calls were made and these resources are not real.</div>' }
 HL '<div class="tiles">'
 HL "<div class=""tile""><span>Estimated monthly savings</span><b>$(ConvertTo-HtmlText (Format-Money $totals))</b></div>"

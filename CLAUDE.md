@@ -84,6 +84,11 @@ Ask the user instead.
   reading properties (`Format-GroupCost` crashed on a second scan with nothing resolved).
 - Don't name helpers after built-in aliases: `h` is `Get-History` (the HTML escaper was `H`), and
   aliases win over functions. Don't assign `$pid`, which is read-only.
+- Fixture timestamps are absolute, so fixture mode judges data against `fixtures/clock.json` (written
+  by `New-Fixtures.ps1`), not the system clock. Without it, idle days drift a day each day and CI
+  breaks. Report metadata (`generated`, `firstSeen`) uses the real run time (`$RunTime`).
+- Billed cost is the saving only when the fix removes the whole bill. Tier changes and
+  retention-only findings (`$PartialSavingTypes`, `partialSaving`) use the price difference.
 - Fixture mode (`-FixtureDir`) replaces the `az` process call itself, so tests don't exercise az
   stderr or exit-code handling. Check those against a real login.
 - Load Balancer and NAT Gateway prices are published under `armRegionName` `Global` / `US Gov`,

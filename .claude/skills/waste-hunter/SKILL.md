@@ -112,7 +112,10 @@ Advisor recommendations on that resource. The report shows how many were exclude
 ## Cost (monthly, per finding)
 
 1. **billed**: actual cost over the last 30 days from `az consumption usage list`, scaled to 30
-   days. Not available for every billing type; the report warns when it falls back.
+   days. Not available for every billing type; the report warns when it falls back. Never used as
+   the saving for a partial change (Premium disk to Standard SSD, Hot to Cool, Premium registry to
+   Standard, Log Analytics retention only): those use the price difference, and the cost source notes
+   the whole bill.
 2. **advisor**: Advisor's `savingsAmount` (monthly).
 3. **estimated**: pay-as-you-go list price **for the resource's own region**, in `-Currency`, from
    the Retail Prices API (looked up by disk tier, snapshot redundancy, IP SKU, App Service SKU and OS,
