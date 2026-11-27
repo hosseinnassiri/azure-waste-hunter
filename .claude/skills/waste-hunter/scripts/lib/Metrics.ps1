@@ -47,6 +47,7 @@ function Get-MetricStats([string] $Id, [string[]] $Metrics, [string] $Aggregatio
     return $out
 }
 
+# Actual cost per resource over the last 30 days, keyed by lower-case resource ID.
 function Add-BilledCosts([string] $SubscriptionId, [hashtable] $Billed) {
     $usage = Invoke-AzRead @('consumption', 'usage', 'list', '--subscription', $SubscriptionId,
         '--start-date', $Now.AddDays(-30).ToString('yyyy-MM-dd'), '--end-date', $Now.ToString('yyyy-MM-dd'))

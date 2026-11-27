@@ -49,6 +49,9 @@ $ErrorActionPreference = 'Stop'
 # still goes through Invoke-AzRead (lib/AzRead.ps1) and the allow list below.
 $LibFiles = @('Common', 'AzRead', 'Metrics', 'Pricing', 'WasteTypes' | ForEach-Object { Join-Path $PSScriptRoot "lib/$_.ps1" })
 foreach ($lib in $LibFiles) { . $lib }
+# Waste types: one record per type in types/NN-<name>.ps1 (see lib/WasteTypes.ps1). A bad record stops here.
+$TypesDir = Join-Path $PSScriptRoot 'types'
+$WasteTypes = Import-WasteTypes $TypesDir
 
 # 'pwsh -File' can't pass arrays, so also accept comma-separated lists: -Subscription "A,B"
 if ($Subscription) { $Subscription = @($Subscription | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
@@ -93,16 +96,6 @@ $AllowedAz = @(
 $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'
 
 # ---------------------------------------------------------------------------------------------
-# Exclusions file: the way to exclude resources without write access to tag them. A local file,
-# so nothing in Azure changes. Each entry has "id" (exact) or "pattern" (wildcards * and ?), a
-# required "reason", and optional "wasteType" (one or a list) and "until" (yyyy-MM-dd; the entry
-# stops applying after that day). Matching is case-insensitive. A malformed file stops the scan,
-# because silently ignoring it would report everything it was meant to exclude.
-# ---------------------------------------------------------------------------------------------
-# Marks a row excluded by the tag (from the query) or by the exclusions file. Excluded rows stay in
-# the data, so they're counted and the scan-to-scan comparison sees them as excluded, not resolved.
-
-# ---------------------------------------------------------------------------------------------
 # Regional list prices: Azure Retail Prices API. A public, unauthenticated, read-only GET, and the
 # only allowed non-az read. Requests contain only service/SKU/region/currency filters, never tenant data.
 # ---------------------------------------------------------------------------------------------
@@ -111,7 +104,6 @@ $PriceCache = @{}
 $PriceStats = @{ live = 0; fallback = 0; failedLookups = 0 }
 $script:PriceApiDown = [bool] $OfflinePricing
 $script:PriceFailStreak = 0
-
 
 # GET with retry. The API rate-limits (429), so back off (honouring Retry-After) on 429, 5xx and
 # network errors, up to 4 attempts.
@@ -123,7 +115,6 @@ $script:PriceFailStreak = 0
 # the same meter's price in both currencies is that rate. A P80 disk (about USD 3,400/month) keeps
 # rounding error small. $null when unavailable (offline, API down).
 $FxRates = @{}
-
 
 # The one place az runs. Called only by Invoke-AzRead, after the allow-list check.
 
@@ -163,31 +154,19 @@ if ($FixtureDir -and (Test-Path (Join-Path $FixtureDir 'faults.json'))) {
 # 30 days or less is never clipped. Null datapoints and absent series (no activity) count as zero.
 # With -Filter "<Dim> eq '*'", BySplit holds per-dimension-value sums.
 
-# Safe nested read: $null for a missing key or a non-dictionary, never a strict-mode error.
-
-# Metric-confirmed waste types (queries 08-12). Their query rows are candidates: Confirm-Candidate
+# Metric-confirmed waste types (records with Candidate). Their query rows are candidates: Confirm-Candidate
 # turns each into 0..n findings, or drops it when the metrics show it's in use.
-$CandidateTypes = @('idle-container-app', 'log-analytics-workspace', 'idle-storage-account', 'idle-container-registry', 'idle-openai-deployment',
-                    'idle-bastion', 'idle-sql-database', 'premium-disk-deallocated-vm', 'idle-firewall')
+$CandidateTypes = @($WasteTypes.Values | Where-Object { $_['Candidate'] } | ForEach-Object { $_.Name })
 $MinAgeDays = 30   # need 30 days of history before calling anything idle
 
-
-
-# Runs a function over items, -Parallel at a time, and returns one result per item in input order:
-# @{ Value = <the function's output>; Error = <message or $null> }. Each runspace re-creates the
-# functions and variables below from their source, and every az call still goes through
-# Invoke-AzRead and its allow list. A function a check needs must be listed here, or that check
-# fails with "not recognized" (and the fixture finding-set test catches it).
-$ParallelFunctions = @('Invoke-AzRead', 'Invoke-AzProcess', 'Invoke-AzFixture', 'Get-FixtureResponse', 'Get-AzRetryDelay', 'Get-AzErrorSummary',
-                       'Get-MetricStats', 'Get-LastCpuActivity', 'Get-Key', 'Get-StatSum', 'Get-StatLast', 'ConvertTo-GiB', 'Format-Bytes',
-                       'New-FindingFrom', 'Confirm-Candidate')
-
-# Actual cost per resource over the last 30 days, keyed by lower-case resource ID.
-
 # ---------------------------------------------------------------------------------------------
-# Scope -> passes (one per tenant, since az graph query uses the current tenant's token)
+# Exclusions file: the way to exclude resources without write access to tag them. A local file,
+# so nothing in Azure changes. Each entry has "id" (exact) or "pattern" (wildcards * and ?), a
+# required "reason", and optional "wasteType" (one or a list) and "until" (yyyy-MM-dd; the entry
+# stops applying after that day). Matching is case-insensitive. A malformed file stops the scan,
+# because silently ignoring it would report everything it was meant to exclude.
+# Loaded before any Azure call so a bad file fails fast; applied by Set-Exclusion (lib/Common.ps1).
 # ---------------------------------------------------------------------------------------------
-# Exclusions file (see Set-Exclusion), loaded before any Azure call so a bad file fails fast
 if (-not $ExclusionsFile -and -not $FixtureDir -and (Test-Path 'waste-hunter.exclusions.json')) { $ExclusionsFile = 'waste-hunter.exclusions.json' }
 $Exclusions = @(); $ExpiredExclusions = @()
 # A config error is printed whole on one line (PowerShell's concise error view cuts long messages)
@@ -222,6 +201,9 @@ if ($ExclusionsFile) {
 }
 catch { [Console]::Error.WriteLine("waste-hunter: $($_.Exception.Message)"); exit 2 }
 
+# ---------------------------------------------------------------------------------------------
+# Scope -> passes (one per tenant, since az graph query uses the current tenant's token)
+# ---------------------------------------------------------------------------------------------
 $accounts = @(Invoke-AzRead @('account', 'list', '--all'))
 $original = Invoke-AzRead @('account', 'show')
 $enabled  = @($accounts | Where-Object { $_.state -eq 'Enabled' })
@@ -270,7 +252,8 @@ $RgOwners      = @{}
 
 # What each query can report, read from its `wasteType = '...'`, plus the extra types some candidate
 # checks produce. Used to tell "resolved" from "not rechecked" when a query fails.
-$DerivedTypes = @{ 'idle-storage-account' = @('hot-blob-unread'); 'idle-container-registry' = @('oversized-container-registry') }
+$DerivedTypes = @{}
+foreach ($t in @($WasteTypes.Values | Where-Object { $_['Parent'] })) { $DerivedTypes[$t.Parent] = @($DerivedTypes[$t.Parent]) + $t.Name | Where-Object { $_ } }
 $QueryWasteTypes = @{}
 foreach ($qf in $queryFiles) {
     $ts = @([regex]::Matches((Get-Content $qf.FullName -Raw), "wasteType\s*=\s*'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
@@ -400,33 +383,8 @@ finally {
 # ---------------------------------------------------------------------------------------------
 # Findings: exclusions, Advisor merge, idle time, cost, actions
 # ---------------------------------------------------------------------------------------------
-$TypeInfo = [ordered]@{
-    'unattached-disk'            = 'Unattached managed disks'
-    'orphaned-nic'               = 'Orphaned NICs (no VM attached)'
-    'unassociated-public-ip'     = 'Unassociated public IPs'
-    'empty-app-service-plan'     = 'Empty App Service plans'
-    'vm-stopped-not-deallocated' = 'VMs stopped but not deallocated'
-    'old-snapshot'               = 'Disk snapshots older than 90 days'
-    'idle-container-app'         = 'Idle Container Apps with always-on replicas'
-    'log-analytics-workspace'    = 'Log Analytics: paid retention or unqueried data'
-    'idle-storage-account'       = 'Idle storage accounts'
-    'hot-blob-unread'            = 'Hot-tier blob data nobody reads'
-    'idle-container-registry'    = 'Idle container registries'
-    'oversized-container-registry' = 'Premium container registries not using Premium'
-    'idle-openai-deployment'     = 'Idle Azure OpenAI deployments that bill hourly'
-    'idle-load-balancer'         = 'Load balancers with no backends'
-    'idle-application-gateway'   = 'Application Gateways with no backends'
-    'idle-network-gateway'       = 'Idle NAT, VPN and ExpressRoute gateways and circuits'
-    'idle-bastion'               = 'Idle Bastion hosts'
-    'idle-sql-database'          = 'Idle SQL databases'
-    'premium-disk-deallocated-vm' = 'Premium disks on long-deallocated VMs'
-    'empty-resource-group'       = 'Empty resource groups'
-    'idle-ddos-protection-plan'  = 'DDoS protection plans protecting nothing'
-    'stopped-app-service-plan'   = 'App Service plans whose apps are all stopped'
-    'orphaned-vm-backup'         = 'Backups of deleted VMs'
-    'idle-firewall'              = 'Idle Azure Firewalls'
-    'advisor-cost'               = 'Other Azure Advisor cost recommendations'
-}
+# Report labels, in report order
+$TypeInfo = [ordered]@{}; foreach ($t in $WasteTypes.Values) { $TypeInfo[$t.Name] = $t.Label }
 $ConfRank = @{ high = 0; medium = 1; low = 2 }
 
 $excluded = @{}
@@ -459,16 +417,12 @@ $consumed = [Collections.Generic.HashSet[string]]::new()
 
 # Shared cost formulas, used with live prices and with pricing.json fallbacks
 
-
-
-
 # Waste types whose saving is a tier change (a price difference), not the resource's whole bill.
 # Log Analytics findings for retention only are marked per finding (partialSaving).
-$PartialSavingTypes = @('premium-disk-deallocated-vm', 'hot-blob-unread', 'oversized-container-registry')
+$PartialSavingTypes = @($WasteTypes.Values | Where-Object { $_['PartialSaving'] } | ForEach-Object { $_.Name })
 
 # Waste types whose cost a reservation or savings plan can cover
-$CommitmentEligible = @('vm-stopped-not-deallocated', 'idle-openai-deployment', 'idle-sql-database', 'empty-app-service-plan', 'stopped-app-service-plan',
-                        'unattached-disk', 'premium-disk-deallocated-vm')
+$CommitmentEligible = @($WasteTypes.Values | Where-Object { $_['CommitmentEligible'] } | ForEach-Object { $_.Name })
 
 # Sovereign clouds have their own portals
 $PortalHost = @{ AzureUSGovernment = 'portal.azure.us'; AzureChinaCloud = 'portal.azure.cn' }[[string] $original.environmentName] ?? 'portal.azure.com'

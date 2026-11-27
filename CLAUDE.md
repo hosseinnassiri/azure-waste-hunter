@@ -61,6 +61,13 @@ Ask the user instead.
   `az.cmd` on Windows mangles double quotes. `//` comments in `.kql` files are fine.
 - Resource Graph returns booleans as `0`/`1`.
 - Number files `NN-name.kql`. The runner runs every `queries/*.kql` in order.
+- **Each waste type is a record** in `scripts/types/NN-name.ps1`, named after its query. It holds the
+  label, flags (`Candidate`, `Parent`, `PartialSaving`, `CommitmentEligible`) and the `Check`,
+  `LivePrice`, `Estimate` and `Action` script blocks (see the header of `lib/WasteTypes.ps1` for
+  the keys and the variables each block can use). A new waste type is a query, a record, fixtures
+  (`tests/New-Fixtures.ps1`) and entries in the suite's expected finding set and cost cases. Nothing
+  else in the runner changes. `Import-WasteTypes` rejects unknown keys, a candidate without `Check`
+  and a record without `Action`, and the tests check that every query has a record.
 
 ## Gotchas found during validation (keep these fixed)
 

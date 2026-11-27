@@ -147,6 +147,10 @@ function Invoke-GraphQuery([string] $QueryFile, [string[]] $Subscriptions, [stri
     return , $rows
 }
 
+# Runs a function over items, -Parallel at a time, and returns one result per item in input order:
+# @{ Value = <the function's output>; Error = <message or $null> }. Each runspace loads the lib/ and
+# types/ files itself and gets the variables in $vars, and every az call still goes through
+# Invoke-AzRead and its allow list.
 function Invoke-InParallel([object[]] $Items, [string] $Function) {
     $Items = @($Items | Where-Object { $null -ne $_ })
     if (-not $Items) { return }
@@ -157,7 +161,6 @@ function Invoke-InParallel([object[]] $Items, [string] $Function) {
         }
         return
     }
-    $defs = (@($ParallelFunctions | ForEach-Object { "function $_ {`n$((Get-Command $_ -CommandType Function).Definition)`n}" })) -join "`n"
     $vars = @{ Now = $Now; MinAgeDays = $MinAgeDays; FixtureDir = $FixtureDir; AllowedAz = $AllowedAz; AzEvents = $AzEvents; MetricCache = $MetricCache
                FixtureFaults = $FixtureFaults; RetryBaseSeconds = $RetryBaseSeconds; AzMaxAttempts = $AzMaxAttempts }
     $indexed = for ($i = 0; $i -lt $Items.Count; $i++) { [pscustomobject] @{ I = $i; Item = $Items[$i] } }
@@ -166,7 +169,10 @@ function Invoke-InParallel([object[]] $Items, [string] $Function) {
         $ErrorActionPreference = 'Stop'
         $job = $_
         foreach ($kv in ($using:vars).GetEnumerator()) { Set-Variable -Name $kv.Key -Value $kv.Value }
-        . ([scriptblock]::Create($using:defs))
+        # The same lib/ and types/ files the runner loaded, so checks run the same code. Script blocks
+        # belong to the runspace that created them, so each runspace loads its own copy.
+        foreach ($lib in $using:LibFiles) { . $lib }
+        $WasteTypes = Import-WasteTypes $using:TypesDir
         try { [pscustomobject] @{ I = $job.I; Value = @(& $using:Function $job.Item); Error = $null } }
         catch { [pscustomobject] @{ I = $job.I; Value = @(); Error = $_.Exception.Message } }
     })

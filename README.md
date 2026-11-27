@@ -103,7 +103,7 @@ regions; its billed and Advisor amounts are in USD, which shows how mixed curren
 pwsh ./.claude/skills/waste-hunter/tests/Test-WasteHunt.ps1
 ```
 
-40 offline tests, with no Azure, no network and no dependencies:
+43 offline tests, with no Azure, no network and no dependencies:
 - **Static checks:** queries are read-only and never project `properties` or `tags` whole; the
   command allow list is exact; `az` is only called through the guard; SKILL.md has no
   `$`-placeholders.
@@ -190,7 +190,8 @@ CLAUDE.md                                   project rules (read-only Azure, no s
   SKILL.md                                  when to trigger, inputs, steps, output contract
   queries/01..23-*.kql                      one Resource Graph query per waste type (08-12, 16-18, 23: metric-confirmed candidates)
   scripts/Invoke-WasteHunt.ps1              runner: allow list, scope, scan, merge, rank
-  scripts/lib/*.ps1                         its functions (az reads, metrics, pricing, waste-type checks) and the report writer
+  scripts/lib/*.ps1                         its functions (az reads, metrics, pricing, dispatch) and the report writer
+  scripts/types/NN-*.ps1                    one record per waste type: label, flags, metric check, prices, suggested action
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
   scripts/rg-owners.kql                     resource group owner tags (owner fallback)
   scripts/pricing.json                      fallback list prices

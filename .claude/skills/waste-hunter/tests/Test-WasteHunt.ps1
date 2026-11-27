@@ -169,6 +169,32 @@ try {
         foreach ($c in $writes) { Assert (& $blocked $c) "deny rules do not block: $c" }
         foreach ($b in @($deny | Where-Object { $_ -like 'Bash(*)' })) { Assert ("PowerShell$($b.Substring(4))" -in $deny) "no PowerShell twin for $b" }
     }
+    Test 'Types: every query has a waste-type record, and every record comes from a query or a parent check' {
+        $fromQueries = @($queries | ForEach-Object { [regex]::Matches((Get-Content $_.FullName -Raw), "wasteType\s*=\s*'([^']+)'") | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique)
+        $recs = @(Get-ChildItem (Join-Path $SkillDir 'scripts/types') -Filter '*.ps1' | ForEach-Object { $f = $_; & $_.FullName | ForEach-Object { $_['File'] = $f.BaseName; $_ } })
+        $names = @($recs | ForEach-Object { $_.Name })
+        foreach ($t in $fromQueries) { Assert ($t -in $names) "query waste type '$t' has no record in scripts/types" }
+        foreach ($r in $recs) {
+            if ($r['Parent']) { Assert ($r.Parent -in $names) "$($r.Name): parent '$($r.Parent)' has no record"; continue }
+            Assert ($r.Name -in $fromQueries) "record '$($r.Name)' ($($r.File).ps1) matches no query's wasteType"
+            $q = @($queries | Where-Object { $_.BaseName -eq $r.File })
+            Assert ($q.Count -eq 1 -and (Get-Content $q[0].FullName -Raw) -match "wasteType\s*=\s*'$([regex]::Escape($r.Name))'") "record '$($r.Name)' should live in the types file named after its query ($($r.File))"
+        }
+    }
+    Test 'Types: a malformed waste-type record stops the run with the reason' {
+        $lib = Join-Path $SkillDir 'scripts/lib/WasteTypes.ps1'
+        foreach ($case in @(
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Action = { 'a' }; Typo = 1 }" }; error = "unknown key 'Typo'" }
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Candidate = `$true; Action = { 'a' } }" }; error = "needs a Check" }
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1 }" }; error = "needs an Action" }
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Action = { 'a' } }"; 'b.ps1' = "@{ Name = 'x'; Label = 'Y'; Order = 2; Action = { 'b' } }" }; error = "defined in both" }
+            @{ files = @{ 'a.ps1' = "@{ Name = 'x'; Label = 'X'; Order = 1; Parent = 'nope'; Action = { 'a' } }" }; error = "parent 'nope'" })) {
+            $dir = Join-Path $Work ("types-" + [guid]::NewGuid().ToString('N').Substring(0, 6)); New-Item -ItemType Directory $dir | Out-Null
+            foreach ($k in $case.files.Keys) { Set-Content (Join-Path $dir $k) $case.files[$k] }
+            $out = & pwsh -NoProfile -Command "`$ErrorActionPreference = 'Stop'; . '$lib'; try { Import-WasteTypes '$dir' | Out-Null; 'LOADED' } catch { `$_.Exception.Message }" 2>&1 | Out-String
+            Assert ($out -notmatch 'LOADED' -and $out.Contains($case.error)) "expected '$($case.error)', got: $($out.Trim())"
+        }
+    }
     Test 'Pricing: pricing.json parses and has every section the runner reads' {
         $p = Get-Content (Join-Path $SkillDir 'scripts/pricing.json') -Raw | ConvertFrom-Json -AsHashtable
         foreach ($k in 'disks', 'snapshotsPerGb', 'publicIps', 'appServicePlans', 'containerApps', 'storagePerGb', 'containerRegistries', 'openAI', 'network', 'sqlDatabase', 'vms') {

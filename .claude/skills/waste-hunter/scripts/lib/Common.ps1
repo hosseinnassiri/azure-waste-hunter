@@ -1,6 +1,7 @@
 # Part of Invoke-WasteHunt.ps1 (dot-sourced into its scope, so it shares the runner's variables).
 # READ-ONLY: see CLAUDE.md. Functions only; nothing runs when this file is loaded.
 
+# Safe nested read: $null for a missing key or a non-dictionary, never a strict-mode error.
 function Get-Key($o, [string] $k) { if ($o -is [System.Collections.IDictionary] -and $o.Contains($k)) { return $o[$k] }; return $null }
 
 function Get-StatSum($stats, [string] $Name) { $x = $stats[$Name]; return $x ? [double] $x.Sum : 0.0 }
@@ -30,6 +31,8 @@ function Format-Day($v) { if (-not $v) { return '' }; try { [DateTimeOffset]::Pa
 
 function Get-FindingKey($f) { return "$($f.wasteType)|$(([string] $f.id).ToLower())" }
 
+# Marks a row excluded by the tag (from the query) or by the exclusions file. Excluded rows stay in
+# the data, so they're counted and the scan-to-scan comparison sees them as excluded, not resolved.
 function Set-Exclusion($row) {
     if ([bool] $row.ignored) { if (-not (Get-Key $row 'excludedBy')) { $row['excludedBy'] = 'tag'; $row['excludeReason'] = 'waste-hunter:ignore=true' }; return }
     $rid = ([string] $row.id).ToLower()

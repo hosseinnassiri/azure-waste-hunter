@@ -31,7 +31,7 @@ uses it as `$Now`, and report metadata uses the real run time (`$RunTime`).
 | **Metrics cache.** Identical metric reads are fetched once per run, including concurrent ones (later callers wait for the first). | done |
 | **Missing `resource-graph` extension** (found on a live scan): az prompted and failed with a traceback. The runner now disables dynamic install for its az processes and names the fix. | done |
 | **Offline fault injection.** `faults.json` in a fixture folder makes chosen az calls fail with real az stderr, so retry and error handling are tested without Azure. | done |
-| **Split the runner** (about 1,700 lines) into dot-sourced files with one record per waste type. Moved to section 4, before adding many new types. | moved |
+| **Split the runner** into `scripts/lib/` and one record per waste type in `scripts/types/`. Output verified byte for byte against the old runner. | done (section 4) |
 
 ## 3. New waste types, by likely savings
 
@@ -72,4 +72,4 @@ expected finding set.
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 still need a live check once `resource-graph` is installed).
-4. Product: split the runner with one record per type (do this before most of section 3), scheduled CI, trends, MCA billing.
+4. Product: split the runner with one record per type (done), scheduled CI, trends, MCA billing.
