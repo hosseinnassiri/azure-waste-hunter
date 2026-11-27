@@ -66,12 +66,15 @@ expected finding set.
 4. **Trends across N scans** — done. Every earlier scan of the same scope: one row per scan (also
    `trends.csv`), median days to resolve overall and per owner (from resolutions each scan now
    records in `findings.json`), and the findings open longest.
-5. **Billed cost for MCA accounts** through Cost Management queries. `CLAUDE.md` allows cost
-   queries, but this needs the `costmanagement` CLI extension and an allow-list addition.
+5. **Billed cost for MCA accounts** — investigated 2026-11-27, not pursued. The current
+   `costmanagement` CLI extension has no `query` command (only `export` and `show-operation-result`).
+   The remaining routes each need a new exception to the read-only rules: a narrow `az rest` POST to
+   `Microsoft.CostManagement/query`, pinning an old unmaintained extension, or the Az PowerShell
+   module with a second login. Decision: keep the current fallback (warn, then Advisor or list prices).
 
 ## Order
 
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 checked live on 2026-11-27, which caught and fixed a Resource Graph join limit in 22).
-4. Product: split the runner with one record per type (done), trends (done), scheduled CI, MCA billing.
+4. Product: split the runner with one record per type (done), trends (done), scheduled CI; MCA billing not pursued.
