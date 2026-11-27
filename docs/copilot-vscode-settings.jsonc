@@ -1,0 +1,25 @@
+// Approval rules for GitHub Copilot in VS Code, the counterpart of .claude/settings.json's deny rules.
+//
+// HOW TO USE: paste the "chat.tools.terminal.autoApprove" entries into your VS Code *User* settings
+// (Command Palette > "Preferences: Open User Settings (JSON)"). If you already have that setting, add
+// these keys to it. VS Code's docs say to put terminal rules in User settings, not Workspace
+// settings, so this is deliberately not a .vscode/settings.json in the repo.
+//
+// WHAT IT DOES: `false` makes Copilot ask before running a matching command, every time, even if it
+// was approved earlier in the session. It doesn't block outright, so read each prompt. Rules match
+// each subcommand of a compound line (`a && az ...` still asks). Every az command asks, reads
+// included: the waste-hunter runner makes its own az calls inside one pwsh process, through its
+// read-only allow list, so this only affects commands Copilot types itself.
+// Docs: https://code.visualstudio.com/docs/agents/run/approvals
+{
+  "chat.tools.terminal.autoApprove": {
+    // Azure CLI: any az command (az, az.cmd), so a write verb can't slip past a list of patterns
+    "/^az(\\.cmd)?(\\s|$)/i": false,
+    // Az PowerShell module: cmdlets that change things, or call the ARM API directly
+    "/^(New|Set|Remove|Update|Stop|Start|Restart|Move|Invoke|Grant|Revoke|Lock|Unlock|Suspend|Resume|Register|Unregister|Enable|Disable|Add|Reset|Restore|Publish|Import|Export|Sync|Clear|Rename|Copy)-Az/i": false,
+    // Az PowerShell reads that return secrets, keys or credentials
+    "/^Get-Az\\w*(Key|Secret|Credential|ConnectionString|PublishingProfile|AccessToken|Sas)/i": false,
+    // Raw calls to Azure Resource Manager (curl, Invoke-RestMethod, Invoke-WebRequest...)
+    "/management\\.azure\\.com/i": { "approve": false, "matchCommandLine": true }
+  }
+}

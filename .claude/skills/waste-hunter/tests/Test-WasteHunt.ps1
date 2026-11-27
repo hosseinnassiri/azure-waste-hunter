@@ -156,6 +156,13 @@ try {
             Assert ($p -in $deny) "missing deny rule $p"
         }
     }
+    Test 'Settings: every Bash deny rule has a PowerShell twin, and the reverse (Bash rules do not bind the PowerShell tool)' {
+        $deny = @((Get-Content (Join-Path $RepoDir '.claude/settings.json') -Raw | ConvertFrom-Json).permissions.deny)
+        $bash = @($deny | Where-Object { $_ -like 'Bash(*)' } | ForEach-Object { $_.Substring(5) })
+        $ps = @($deny | Where-Object { $_ -like 'PowerShell(*)' } | ForEach-Object { $_.Substring(11) })
+        foreach ($b in $bash) { Assert ($b -in $ps) "Bash($b is denied but PowerShell($b is not" }
+        foreach ($p in $ps) { Assert ($p -in $bash) "PowerShell($p is denied but Bash($p is not" }
+    }
     Test 'Settings: deny rules block writes, secrets and shells but never the allowed reads' {
         $deny = @((Get-Content (Join-Path $RepoDir '.claude/settings.json') -Raw | ConvertFrom-Json).permissions.deny)
         # A rule's * matches any text, spaces included

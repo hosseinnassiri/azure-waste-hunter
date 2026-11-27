@@ -191,7 +191,12 @@ report states that rate.
   original default subscription is restored afterwards.
 - The only non-`az` call is a GET to the public Retail Prices API. It's sent only service, SKU,
   region and currency, never anything from your tenant. Use `-OfflinePricing` to skip it.
-- `.claude/settings.json` denies write and secret-reading `az` commands for Claude Code itself.
+- `.claude/settings.json` denies write and secret-reading `az` commands for Claude Code itself (in both its Bash
+  and PowerShell tools).
+- Other agents: GitHub Copilot finds the skill in `.claude/skills/` and reads the rules in `AGENTS.md`, but
+  not `.claude/settings.json`. For Copilot in VS Code, paste `docs/copilot-vscode-settings.jsonc` into your
+  **User** settings (VS Code doesn't take these rules from workspace settings). It makes Copilot ask before every
+  `az` command it types. The runner's own allow list applies whichever agent runs it.
 - Queries project named columns only, never `properties` wholesale, so no secrets reach the output.
 - Coverage is checked: Resource Graph silently skips subscriptions you can't read, so the runner
   checks which subscriptions it actually saw and marks a tenant `partial`/`failed`. A scope that
@@ -225,6 +230,8 @@ price isn't readable either, so these findings show the unused share of hours, n
 
 ```
 CLAUDE.md                                   project rules (read-only Azure, no secrets)
+AGENTS.md                                   the hard rules for other agents (Copilot, Codex), pointing to CLAUDE.md
+docs/copilot-vscode-settings.jsonc          approval rules for Copilot in VS Code (paste into User settings)
 .claude/settings.json                       deny rules backing those rules
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
