@@ -94,6 +94,17 @@ try {
             Assert ($noTostring -notmatch '\btags\b(?![\[.])') "$($q.Name) projects 'tags' wholesale"
         }
     }
+    Test 'Queries: no column is named after a reserved word (Resource Graph fails with a bare ParserFailure)' {
+        # Found live: `shards` (query 26) and `kind` (a probe query). Fixtures can't catch this. KQL's own
+        # kind= option on join, union and mv-expand is fine, and so is reading the kind property.
+        $rx = '(?i)(?<!\b(?:join|union|mv-expand)\s+)\b(kind|shards)\s*=(?!=)'
+        foreach ($q in $queries) {
+            $code = (Get-Content $q.FullName | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
+            $code = $code -replace "'[^']*'", "''"
+            $m = [regex]::Match($code, $rx)   # not -match: the message would read $Matches, unset (strict mode) when nothing matches
+            Assert (-not $m.Success) "$($q.Name) names a column '$($m.Groups[1].Value)', which Resource Graph rejects; rename it (shardCount, acctKind)"
+        }
+    }
     Test 'Queries: prefixes that cost nothing (IPv6, derived from a custom BYOIP prefix) are not reported as unused' {
         $code = (Get-Content (Join-Path $SkillDir 'queries/31-unused-public-ip-prefixes.kql') | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
         Assert ($code -match "publicIPAddressVersion\)\s*!~\s*'IPv6'") 'query 31 must skip IPv6 prefixes (no charge)'

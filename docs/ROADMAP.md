@@ -56,16 +56,13 @@ expected finding set.
    exact `id` or wildcard `pattern`, required `reason`, optional `wasteType` and `until`. Applied before
    metric checks (no az calls for excluded candidates) and after (deployments, Hot blobs). Expired and
    unused entries are reported; a malformed file stops the scan. `excluded.csv` lists every exclusion
-   (tag or file) with its reason. **Still to do:** a `waste-hunter:ignore-until=<date>` tag (see
-   section 6).
-2. **Configurable thresholds**: snapshot age (90 days), minimum age (30 days), Hot-blob size
-   (100 GiB), Container Apps traffic (100 MiB).
-3. **Scheduled-scan template** — not needed (decided 2026-11-27). Scans run locally on demand, and
+   (tag or file) with its reason.
+2. **Scheduled-scan template** — not needed (decided 2026-11-27). Scans run locally on demand, and
    reports stay in the gitignored `reports/` folder. CI runs only the offline test suite.
-4. **Trends across N scans** — done. Every earlier scan of the same scope: one row per scan (also
+3. **Trends across N scans** — done. Every earlier scan of the same scope: one row per scan (also
    `trends.csv`), median days to resolve overall and per owner (from resolutions each scan now
    records in `findings.json`), and the findings open longest.
-5. **Billed cost for MCA accounts** — investigated 2026-11-27, not pursued. The current
+4. **Billed cost for MCA accounts** — investigated 2026-11-27, not pursued. The current
    `costmanagement` CLI extension has no `query` command (only `export` and `show-operation-result`).
    The remaining routes each need a new exception to the read-only rules: a narrow `az rest` POST to
    `Microsoft.CostManagement/query`, pinning an old unmaintained extension, or the Az PowerShell
@@ -120,8 +117,6 @@ Everything in sections 1-5 is done or decided against. The open items:
 
 | Item | Notes |
 |---|---|
-| `waste-hunter:ignore-until=<date>` tag | the same change in all 36 queries, plus a live check |
-| Configurable thresholds | snapshot age (90 days), minimum age (30 days), Hot-blob size (100 GiB), Container Apps traffic (100 MiB), the new 10% Cosmos peak and 5% VM CPU |
 | Smaller fixtures | `metrics.json` is about 250 KB because the hourly series (ML clusters, VM CPU) need 480+ points; generating them at test time would keep the repo small |
 
 ### Can't be done with the allowed commands (recorded so they aren't re-investigated)
@@ -132,8 +127,8 @@ Everything in sections 1-5 is done or decided against. The open items:
 | Reservation prices | not readable, so type 34 has no cost, only the unused share of hours |
 | ML compute instances | not in Resource Graph and no idle metric |
 | Fabric capacity usage | no Azure Monitor metric (it's in the Fabric Capacity Metrics app), so type 25 reports Fabric at low confidence |
-| Billed cost on MCA accounts | decided against (section 4, item 5) |
-| Scheduled scans | not needed (section 4, item 3) |
+| Billed cost on MCA accounts | decided against (section 4, item 4) |
+| Scheduled scans | not needed (section 4, item 2) |
 
 ## Order (history)
 

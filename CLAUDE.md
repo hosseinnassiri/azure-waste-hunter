@@ -62,7 +62,8 @@ Ask the user instead.
   `az.cmd` on Windows mangles double quotes. `//` comments in `.kql` files are fine.
 - Resource Graph returns booleans as `0`/`1`.
 - Some column names are reserved in Resource Graph's KQL and fail with a bare `ParserFailure`: `shards`
-  is one (query 26 uses `shardCount`). Fixtures can't catch this, so run new queries against a login.
+  (query 26 uses `shardCount`) and `kind` (`| project kind = tostring(kind)` fails; reading `kind` is
+  fine). A static test rejects both, but fixtures can't catch others, so run new queries against a login.
 - Resource Graph lets a query join a table other than its main table only once
   (`DisallowedMaxNumberOfRemoteTables`). Joining the main table to itself is fine. Vaults, for example, are
   also in `recoveryservicesresources`. A static test checks this, because fixtures can't.
