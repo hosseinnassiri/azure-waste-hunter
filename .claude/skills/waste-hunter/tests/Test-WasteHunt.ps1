@@ -150,6 +150,25 @@ try {
         Assert ($s -match '(?s)^---\s*\nname:\s*waste-hunter\s*\ndescription:\s*\S.+?\n---') 'frontmatter name/description missing'
         Assert ($s -notmatch '\$(\d|ARGUMENTS)') 'SKILL.md contains a $-placeholder the skill loader would replace'
     }
+    Test 'Skill: SKILL.md finds its runner from its own folder, so an installed plugin copy works outside this repo' {
+        $s = Get-Content (Join-Path $SkillDir 'SKILL.md') -Raw
+        Assert ($s -notmatch '\.claude/skills/') 'SKILL.md uses a repo-relative .claude/skills/ path, which breaks a plugin install'
+        Assert ($s -match [regex]::Escape('pwsh -NoProfile -File "${CLAUDE_SKILL_DIR}/scripts/Invoke-WasteHunt.ps1"')) 'SKILL.md should run the runner through ${CLAUDE_SKILL_DIR}'
+    }
+    Test 'Plugin: the marketplace entry points at a plugin that holds this skill, with a matching manifest' {
+        $m = Get-Content (Join-Path $RepoDir '.claude-plugin/marketplace.json') -Raw | ConvertFrom-Json -AsHashtable
+        foreach ($k in 'name', 'owner', 'plugins') { Assert $m.ContainsKey($k) "marketplace.json has no '$k'" }
+        $entry = @($m.plugins | Where-Object { $_['name'] -eq 'waste-hunter' })
+        Assert-Equal 1 $entry.Count 'one waste-hunter plugin entry'
+        $root = Join-Path $RepoDir $entry[0]['source']
+        Assert (Test-Path (Join-Path $root 'skills/waste-hunter/SKILL.md')) "plugin source $($entry[0]['source']) has no skills/waste-hunter/SKILL.md"
+        Assert-Equal (Resolve-Path $SkillDir).Path (Resolve-Path (Join-Path $root 'skills/waste-hunter')).Path 'the plugin ships this skill, not a copy'
+        $p = Get-Content (Join-Path $root '.claude-plugin/plugin.json') -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Equal 'waste-hunter' $p['name'] 'plugin.json name'
+        Assert-Equal 'MIT' $p['license'] 'plugin.json license'
+        # No version: installs follow the commit SHA. A fixed version would leave users on a stale copy until bumped.
+        Assert (-not $p.ContainsKey('version') -and -not $entry[0].ContainsKey('version')) 'set no plugin version (updates follow commits)'
+    }
     Test 'Settings: deny rules cover write and secret-reading az commands' {
         $deny = @((Get-Content (Join-Path $RepoDir '.claude/settings.json') -Raw | ConvertFrom-Json).permissions.deny)
         foreach ($p in 'Bash(az * delete *)', 'PowerShell(az * delete *)', 'Bash(az rest *)', 'Bash(az keyvault secret *)', 'Bash(az * deallocate *)') {

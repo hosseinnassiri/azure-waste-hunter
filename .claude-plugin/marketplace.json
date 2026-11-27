@@ -1,0 +1,15 @@
+{
+  "name": "azure-waste-hunter",
+  "owner": { "name": "hosseinnassiri" },
+  "metadata": {
+    "description": "Read-only Azure wasted-spend scanning for Claude Code and GitHub Copilot CLI"
+  },
+  "plugins": [
+    {
+      "name": "waste-hunter",
+      "source": "./.claude",
+      "description": "Read-only scan of an Azure tenant, management group or subscription for wasted spend, with a ranked report, estimated monthly savings and quick wins. Never changes anything in Azure.",
+      "homepage": "https://github.com/hosseinnassiri/azure-waste-hunter"
+    }
+  ]
+}

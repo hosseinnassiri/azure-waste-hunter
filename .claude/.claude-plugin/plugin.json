@@ -1,0 +1,9 @@
+{
+  "name": "waste-hunter",
+  "description": "Read-only scan of an Azure tenant, management group or subscription for wasted spend, with a ranked report, estimated monthly savings and quick wins. Never changes anything in Azure.",
+  "author": { "name": "hosseinnassiri" },
+  "homepage": "https://github.com/hosseinnassiri/azure-waste-hunter",
+  "repository": "https://github.com/hosseinnassiri/azure-waste-hunter",
+  "license": "MIT",
+  "keywords": ["azure", "finops", "cost", "waste", "read-only"]
+}

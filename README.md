@@ -73,8 +73,27 @@ owner/app/env tags, age or idle time, estimated monthly cost and its source, con
 - Optional, for idle time and billed cost: **Monitoring Reader** and **Cost Management Reader**;
   for reservation utilization, **Reservations Reader**
 
-## Usage
+## Install as a plugin
 
+This repo is a plugin marketplace for Claude Code and GitHub Copilot CLI, so you can use the skill in
+any folder without cloning it. Installs follow the latest commit on `main`.
+
+| | Claude Code | GitHub Copilot CLI |
+|---|---|---|
+| Add the marketplace | `/plugin marketplace add hosseinnassiri/azure-waste-hunter` | `copilot plugin marketplace add hosseinnassiri/azure-waste-hunter` |
+| Install | `/plugin install waste-hunter@azure-waste-hunter` | `copilot plugin install waste-hunter@azure-waste-hunter` |
+| Use | `/waste-hunter:waste-hunter`, or ask *"find wasted spend in subscription X"* | *"Use the /waste-hunter skill to scan subscription X"*, or just ask |
+| Update | `claude plugin update waste-hunter@azure-waste-hunter` | `copilot plugin update waste-hunter` |
+
+On Claude Code 2.1.275 or later, one step also works:
+`/plugin install waste-hunter --marketplace hosseinnassiri/azure-waste-hunter`.
+
+Reports go to `reports/<timestamp>/` under the folder you run from. They hold resource IDs and owner
+tags, so add `reports/` to that folder's `.gitignore`. An installed plugin gets the skill and its
+runner's read-only allow list, but not this repo's `.claude/settings.json` deny rules, `CLAUDE.md` or
+`AGENTS.md`. For Copilot in VS Code, also paste `docs/copilot-vscode-settings.jsonc` into your User settings.
+
+## Usage
 ```powershell
 # Every enabled subscription in the current tenant
 pwsh ./.claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1
@@ -245,5 +264,4 @@ docs/copilot-vscode-settings.jsonc          approval rules for Copilot in VS Cod
   tests/Test-WasteHunt.ps1                  offline test suite
   tests/fixtures/, New-Fixtures.ps1         synthetic offline demo data (clock.json: the time it was generated)
   tests/sample-output/                      report generated from that data
-.github/workflows/tests.yml                 runs the tests on every push
-```
++```

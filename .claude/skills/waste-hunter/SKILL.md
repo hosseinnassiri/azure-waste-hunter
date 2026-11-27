@@ -19,7 +19,13 @@ a ranked report. **It never changes anything in Azure.**
   filters only.
 - Suggested actions and reference commands are text for the user. **Never execute them**, and
   don't offer to. If the user wants to act, tell them to review the commands and run them themselves.
-- Never print secrets, keys or connection strings.
+- Nothing else touches Azure: no `az rest`, no `az resource invoke-action`, no `run-command`, and no command
+  that creates, updates, deletes, stops, starts, resizes, moves, locks or tags anything, not even
+  "to test".
+- Never print secrets, keys or connection strings, and don't run commands that return them (`keys list`,
+  `list-keys`, `show-connection-string`, `keyvault secret show`, `appsettings list`). If one shows up anyway, redact it.
+- Reports contain resource IDs, names and owner tags. Keep them out of git: in this skill's own repo
+  `reports/` is gitignored, but anywhere else tell the user to add `reports/` to their `.gitignore`.
 
 ## Inputs: scope
 
@@ -49,11 +55,13 @@ cloud; regional prices cover the public cloud and US Gov.
 1. **Preflight.** Run `az account show` to confirm a login, then check
    `az extension show -n resource-graph`. If the extension is missing, **ask the user** before
    running `az extension add -n resource-graph`. It's a local CLI change.
-2. **Run** from the repo root:
+2. **Run** the runner in this skill's own folder (the folder holding this SKILL.md; it may be a
+   plugin install, not the current repo). Run it from the user's working folder, where the report goes:
    ```
-   pwsh -NoProfile -File .claude/skills/waste-hunter/scripts/Invoke-WasteHunt.ps1 <scope flags>
+   pwsh -NoProfile -File "${CLAUDE_SKILL_DIR}/scripts/Invoke-WasteHunt.ps1" <scope flags>
    ```
-   It writes `reports/<timestamp>/report.md` and `findings.csv`, and restores the user's default
+   If `CLAUDE_SKILL_DIR` in that line wasn't replaced with a path (other agents don't fill it in),
+   use the full path of this skill's folder instead. It writes `reports/<timestamp>/report.md` and `findings.csv`, and restores the user's default
    subscription when it finishes.
 3. **Read `report.md`** and reply with:
    - the total estimated monthly savings **and the high-confidence part** (the total includes
@@ -203,17 +211,17 @@ Reader role, and only orders the scan knows about are checked.
 
 ## Fallback if `pwsh` isn't available
 
-Run each `queries/*.kql` with `az graph query -q @<file> --first 1000` for each tenant, plus
-`scripts/coverage-check.kql` first. Drop rows where `ignored` is 1. Merge `07` rows into matching
+Run each `queries/*.kql` in this skill's folder with `az graph query -q @<file> --first 1000` for each
+tenant, plus `scripts/coverage-check.kql` first. Drop rows where `ignored` is 1. Merge `07` rows into matching
 IDs. Price findings from `pricing.json` (US East, USD). Write a report in the same shape. Say clearly
 that idle time, billed cost and regional prices were skipped.
 
 ## Tests
 
-`pwsh .claude/skills/waste-hunter/tests/Test-WasteHunt.ps1` runs the offline suite (static checks
+`pwsh "${CLAUDE_SKILL_DIR}/tests/Test-WasteHunt.ps1"` runs the offline suite (static checks
 plus synthetic scenario runs, with no Azure or network). GitHub Actions runs it on every push.
 
 ## Demo without Azure
 
-`-FixtureDir .claude/skills/waste-hunter/tests/fixtures` runs the full pipeline on synthetic data
+`-FixtureDir "${CLAUDE_SKILL_DIR}/tests/fixtures"` runs the full pipeline on synthetic data
 (the report is labeled SYNTHETIC). `tests/New-Fixtures.ps1` regenerates those files.
