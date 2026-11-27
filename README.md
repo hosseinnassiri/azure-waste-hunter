@@ -7,7 +7,7 @@ deletes anything.**
 Ask Claude in this repo things like *"find waste in my tenant"*, *"cleanup candidates in
 subscription X"* or *"orphaned resources under management group Y"*. Or run the script directly.
 
-## What it finds (phase 1)
+## What it finds
 
 | # | Waste type | How |
 |---|---|---|
@@ -165,12 +165,12 @@ CLAUDE.md                                   project rules (read-only Azure, no s
 .claude/skills/waste-hunter/
   SKILL.md                                  when to trigger, inputs, steps, output contract
   queries/01..19-*.kql                      one Resource Graph query per waste type (08-12, 16-18: metric-confirmed candidates)
-  scripts/rg-owners.kql                     resource group owner tags (owner fallback)
-  tests/Test-WasteHunt.ps1                  offline test suite
-.github/workflows/tests.yml                 runs the tests on every push
   scripts/Invoke-WasteHunt.ps1              runner: scan, idle time, cost, merge, rank, report
   scripts/coverage-check.kql                which subscriptions Resource Graph can see
+  scripts/rg-owners.kql                     resource group owner tags (owner fallback)
   scripts/pricing.json                      fallback list prices
-  tests/fixtures/, New-Fixtures.ps1         synthetic offline demo data
+  tests/Test-WasteHunt.ps1                  offline test suite
+  tests/fixtures/, New-Fixtures.ps1         synthetic offline demo data (clock.json: the time it was generated)
   tests/sample-output/                      report generated from that data
+.github/workflows/tests.yml                 runs the tests on every push
 ```

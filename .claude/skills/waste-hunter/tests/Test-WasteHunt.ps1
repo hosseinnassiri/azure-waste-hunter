@@ -261,6 +261,33 @@ try {
         Assert ($r.Report -match '\*\*Resolved\*\* \(gone, and rechecked this time\) \| 0 \|') 'no resolved findings expected'
         Assert (@($r.Rows | Where-Object { $_.status -ne 'open' }).Count -eq 0) 'every finding should be open'
     }
+    Test 'Changes: a failed check on one resource does not hide another whose ID it prefixes' {
+        $parent = Join-Path $Work 'prefix'
+        $fx1 = Copy-Fixtures 'prefix1'
+        Edit-Fixture $fx1 '09-log-analytics-workspaces.json' { param($d) foreach ($x in $d) { if ($x.name -eq 'log-app-prod') { $x.checkInputs.retention = 90 } }; $d }
+        Invoke-Run $fx1 '20261101-000000' @() $parent | Out-Null
+        # log-app-prod is gone; workspace 'log-app' (a prefix of its ID) fails its check
+        $fx2 = Copy-Fixtures 'prefix2'
+        Edit-Fixture $fx2 '09-log-analytics-workspaces.json' { param($d)
+            $bad = $d | Where-Object { $_.name -eq 'log-app-prod' } | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+            $bad.name = 'log-app'; $bad.id = $bad.id -replace 'log-app-prod$', 'log-app'; $bad.checkInputs.retention = 'not-a-number'
+            @($d | Where-Object { $_.name -ne 'log-app-prod' }) + $bad }
+        $r = Invoke-Run $fx2 '20261108-000000' @() $parent
+        Assert ($r.Report -match "Couldn't check log-app ") 'log-app check should have failed'
+        Assert ($r.Report -match 'Resolved:\*\* [^\n]*log-app-prod') 'log-app-prod should be resolved, not "not rechecked"'
+    }
+    Test 'Keys: two waste types on one resource are both kept; Advisor merges once; exact duplicates collapse' {
+        $fx = Copy-Fixtures 'keys'
+        Edit-Fixture $fx '19-empty-resource-groups.json' { param($d)
+            $asp = Get-Content (Join-Path $fx '04-empty-app-service-plans.json') -Raw | ConvertFrom-Json | Where-Object { $_.name -eq 'asp-legacy-api' }
+            $other = $asp | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $other.wasteType = 'empty-resource-group'
+            @($d) + $other + ($d[0] | ConvertTo-Json -Depth 8 | ConvertFrom-Json) }       # plus an exact duplicate of rg-old-poc
+        $r = Invoke-Run $fx 'keys'
+        $asp = @($r.Rows | Where-Object { $_.name -eq 'asp-legacy-api' })
+        Assert-Equal 'empty-app-service-plan, empty-resource-group' (@($asp | ForEach-Object { $_.wasteType } | Sort-Object) -join ', ') 'waste types on asp-legacy-api'
+        Assert-Equal 1 @($asp | Where-Object { $_.reason -match 'corroborated by Advisor' }).Count 'findings that merged the Advisor recommendation'
+        Assert-Equal 1 @($r.Rows | Where-Object { $_.name -eq 'rg-old-poc' }).Count 'rg-old-poc after an exact duplicate row'
+    }
     Test 'Changes: -Compare none skips the comparison' {
         $r = Invoke-Run $Fixtures '20261115-000000' @('-Compare', 'none') (Join-Path $Work 'history')
         Assert ($r.Report -match 'this report is the baseline') '-Compare none should not compare'

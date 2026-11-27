@@ -691,7 +691,9 @@ $excluded = @{}
 foreach ($r in $rowsAll) { if ([bool] $r.ignored) { $excluded[$r.wasteType] = ($excluded[$r.wasteType] ?? 0) + 1 } }
 
 $live     = @($rowsAll | Where-Object { -not [bool] $_.ignored })
-$detected = @($live | Where-Object { $_.wasteType -ne 'advisor-cost' } | Group-Object { $_.id.ToLower() } | ForEach-Object { $_.Group[0] })
+# Deduplicated by waste type + ID (the finding key), so the same row seen twice collapses but two
+# different waste types on one resource are both kept
+$detected = @($live | Where-Object { $_.wasteType -ne 'advisor-cost' } | Group-Object { "$($_.wasteType)|$(([string] $_.id).ToLower())" } | ForEach-Object { $_.Group[0] })
 $advisor  = @($live | Where-Object { $_.wasteType -eq 'advisor-cost' })
 $advByRes = @{}
 foreach ($a in $advisor) { $k = ([string] $a.id).ToLower(); if (-not $advByRes[$k]) { $advByRes[$k] = @() }; $advByRes[$k] += $a }
@@ -1119,8 +1121,9 @@ foreach ($r in @($detected) + @($advisor)) {
     if ($r.wasteType -eq 'advisor-cost') {
         $f.advisorMonthly = $r.monthlySavings; $f.advisorCurrency = $r.currency
     }
-    elseif ($advByRes[$key]) {
-        $recs = @($advByRes[$key])
+    # A recommendation merges into the first finding for its resource only, so a resource with two
+    # waste types doesn't count Advisor's saving twice
+    elseif (($recs = @($advByRes[$key] | Where-Object { $_ -and -not $consumed.Contains([string] $_.recommendationId) }))) {
         foreach ($a in $recs) { [void] $consumed.Add([string] $a.recommendationId) }
         $sum = ($recs | ForEach-Object { [double] ($_.monthlySavings ?? 0) } | Measure-Object -Sum).Sum
         if ($sum -gt 0) { $f.advisorMonthly = $sum; $f.advisorCurrency = $recs[0].currency }
@@ -1261,7 +1264,7 @@ foreach ($k in $prevByKey.Keys) {
     $p = $prevByKey[$k]
     $prevId = ([string] $p['id']).ToLower()    # (not $pid: that's PowerShell's read-only process-ID variable)
     $unchecked = -not $ScannedSubs.Contains([string] $p['subscriptionId']) -or $UnverifiedTypes.Contains([string] $p['wasteType']) -or
-                 @($UncheckedIds | Where-Object { $prevId.StartsWith($_) }).Count -gt 0 -or
+                 @($UncheckedIds | Where-Object { $prevId -eq $_ -or $prevId.StartsWith("$_/") }).Count -gt 0 -or   # itself or a child (OpenAI deployments), not '.../st1' for '.../st10'
                  ($SkipMetrics -and ([string] $p['wasteType'] -in ($CandidateTypes + @($DerivedTypes.Values | ForEach-Object { $_ }))))
     if ($excludedKeys.Contains($k)) { $nowExcluded += $p }
     elseif ($unchecked) { $notRechecked += $p }

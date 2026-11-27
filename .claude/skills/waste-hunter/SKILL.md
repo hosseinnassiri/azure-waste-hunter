@@ -1,6 +1,6 @@
 ---
 name: waste-hunter
-description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, idle Container Apps, Log Analytics retention and unqueried data, idle storage accounts and unread Hot blobs, idle or oversized container registries, idle Azure OpenAI PTU and fine-tuned deployments, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
+description: Read-only scan of Azure for wasted spend (unattached disks, orphaned NICs, unassociated public IPs, empty App Service plans, VMs stopped but not deallocated, snapshots over 90 days old, idle Container Apps, Log Analytics retention and unqueried data, idle storage accounts and unread Hot blobs, idle or oversized container registries, idle Azure OpenAI PTU and fine-tuned deployments, load balancers and Application Gateways with no backends, idle NAT, VPN and ExpressRoute gateways, idle Bastion hosts, idle SQL databases, Premium disks on long-deallocated VMs, empty resource groups, and Azure Advisor cost recommendations). Produces a ranked markdown report and CSV with estimated monthly savings. Use when the user asks to "find waste", "find wasted spend", "cleanup candidates", "orphaned resources", "unused resources", "Azure cost savings", "what can we delete in Azure", or similar, for a tenant, management group or subscription list.
 ---
 
 # waste-hunter
@@ -98,8 +98,8 @@ Types 8-12 and 16-18 are **candidates confirmed by 30 days of metrics**. One who
 not reported. Resources created under 30 days ago aren't judged. With `-SkipMetrics` these types
 are left out entirely, and the report says so.
 
-**No duplicates with Advisor.** A recommendation whose impacted resource matches a finding from 1–6 is
-merged into that finding: the confidence goes up one level and the reason gets "corroborated by
+**No duplicates with Advisor.** A recommendation whose impacted resource matches a finding of any other
+type is merged into that finding: the confidence goes up one level and the reason gets "corroborated by
 Advisor". Only unmatched recommendations appear under "Other Azure Advisor cost recommendations".
 Advisor's own reservation, savings plan and right-size figures can overlap each other, so treat that
 section's total as an upper bound.
