@@ -1,11 +1,13 @@
 // waste-hunter 31 · Public IP prefixes with no addresses in use
 // A prefix bills every address in it every hour (a /28 is 16 addresses), whether or not any public IP,
-// NAT gateway or load balancer uses it. IPv6 prefixes are skipped. A prefix may be kept on purpose so
-// its addresses stay on partner allowlists, so these are medium confidence.
+// NAT gateway or load balancer uses it. Skipped because they're free: IPv6 prefixes, and prefixes
+// derived from a custom IP prefix (your own range brought to Azure, BYOIP). A prefix may be kept on
+// purpose so its addresses stay on partner allowlists, so these are medium confidence.
 // READ-ONLY. Run:  az graph query -q @31-unused-public-ip-prefixes.kql --first 1000
 resources
 | where type =~ 'microsoft.network/publicipprefixes'
 | where tostring(properties.publicIPAddressVersion) !~ 'IPv6'
+| where isempty(tostring(properties.customIPPrefix.id))
 | extend used = coalesce(array_length(properties.publicIPAddresses), 0),
          nat = isnotempty(tostring(properties.natGateway.id)),
          lbfe = isnotempty(tostring(properties.loadBalancerFrontendIpConfiguration.id)),

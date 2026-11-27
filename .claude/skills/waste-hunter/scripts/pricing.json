@@ -119,8 +119,9 @@
   },
 
   "messaging": {
-    "_about": "Per unit per hour: Service Bus Premium messaging unit, Event Hubs throughput unit (Basic, Standard) or processing unit (Premium).",
+    "_about": "Per unit per hour: Service Bus Premium messaging unit, Service Bus Standard base unit, Event Hubs throughput unit (Basic, Standard) or processing unit (Premium).",
     "serviceBusPremiumPerMuHour": 0.9275,
+    "serviceBusStandardBasePerHour": 0.013441,
     "eventHubsPerUnitHour": { "Basic": 0.015, "Standard": 0.03, "Premium": 1.027 }
   },
 

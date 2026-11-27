@@ -37,11 +37,11 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 24 | Over-provisioned Cosmos DB throughput | provisioned RU/s whose busiest hour used under 10% of it in 30 days (saving: down to twice the peak) |
 | 25 | Idle Fabric, Power BI Embedded, Synapse and Data Explorer compute | running Synapse pools and Data Explorer clusters with no connections or queries; Power BI Embedded capacities under 1% CPU; Active Fabric capacities (low: no usage metric) |
 | 26 | Idle Redis caches | Azure Cache for Redis and Azure Managed Redis with no connected client in 30 days |
-| 27 | Idle Service Bus Premium and Event Hubs namespaces | 0 messages in or out in 30 days |
+| 27 | Idle Service Bus and Event Hubs namespaces | Service Bus Premium or Standard, or Event Hubs, with 0 messages in or out in 30 days |
 | 28 | Idle API Management | 0 gateway requests in 30 days (Consumption tier skipped) |
 | 29 | ML compute clusters that never scale to zero | at least one idle node in every hour for 30 days (minimum nodes above 0) |
 | 30 | Private endpoints with no working connection | connection Disconnected (target deleted) or Rejected |
-| 31 | Unused public IP prefixes | no public IP, NAT gateway or load balancer uses the range |
+| 31 | Unused public IP prefixes | no public IP, NAT gateway or load balancer uses the range (IPv6 and BYOIP-derived prefixes are free, so skipped) |
 | 32 | Empty Front Door and Traffic Manager profiles | no endpoints; Front Door Standard/Premium still bills its base fee |
 | 33 | Non-production VMs with no shutdown schedule | running, tagged dev/test/..., no auto-shutdown (saving: off outside 07:00–19:00 weekdays) |
 | 34 | Underused reservations | under 80% of reserved hours used in 30 days (orders from usage records or `-ReservationOrder`) |

@@ -94,6 +94,11 @@ try {
             Assert ($noTostring -notmatch '\btags\b(?![\[.])') "$($q.Name) projects 'tags' wholesale"
         }
     }
+    Test 'Queries: prefixes that cost nothing (IPv6, derived from a custom BYOIP prefix) are not reported as unused' {
+        $code = (Get-Content (Join-Path $SkillDir 'queries/31-unused-public-ip-prefixes.kql') | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
+        Assert ($code -match "publicIPAddressVersion\)\s*!~\s*'IPv6'") 'query 31 must skip IPv6 prefixes (no charge)'
+        Assert ($code -match 'isempty\(tostring\(properties\.customIPPrefix\.id\)\)') 'query 31 must skip prefixes derived from a custom IP prefix (no charge)'
+    }
     Test 'Queries: a table other than the main one is joined at most once (Resource Graph rejects more)' {
         # DisallowedMaxNumberOfRemoteTables, found live on query 22 (the fixtures can't catch it). A query
         # may join its own main table any number of times; any other table only once.
@@ -149,6 +154,14 @@ try {
         $s = Get-Content (Join-Path $SkillDir 'SKILL.md') -Raw
         Assert ($s -match '(?s)^---\s*\nname:\s*waste-hunter\s*\ndescription:\s*\S.+?\n---') 'frontmatter name/description missing'
         Assert ($s -notmatch '\$(\d|ARGUMENTS)') 'SKILL.md contains a $-placeholder the skill loader would replace'
+    }
+    Test 'Skill: frontmatter fits the Agent Skills limits (Copilot rejects a description over 1024 characters)' {
+        $s = Get-Content (Join-Path $SkillDir 'SKILL.md') -Raw
+        $name = [regex]::Match($s, '(?m)^name:\s*(.+?)\s*$').Groups[1].Value
+        $desc = [regex]::Match($s, '(?m)^description:\s*(.+?)\s*$').Groups[1].Value
+        Assert ($name -match '^[a-z0-9]+(-[a-z0-9]+)*$' -and $name.Length -le 64) "name '$name' must be 1-64 lowercase letters, digits and single hyphens"
+        Assert-Equal (Split-Path $SkillDir -Leaf) $name 'name matches the skill folder'
+        Assert ($desc.Length -ge 1 -and $desc.Length -le 1024) "description is $($desc.Length) characters; the limit is 1024"
     }
     Test 'Skill: SKILL.md finds its runner from its own folder, so an installed plugin copy works outside this repo' {
         $s = Get-Content (Join-Path $SkillDir 'SKILL.md') -Raw
@@ -265,7 +278,7 @@ try {
         'orphaned-vm-backup|rsv-dev/vm-old01', 'orphaned-workload-backup|rsv-dev/vm-old01/billing', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
         'overprovisioned-cosmos-db|cosmos-orders-legacy', 'overprovisioned-cosmos-db|cosmos-dev-idle',
         'idle-data-platform|fab-analytics', 'idle-data-platform|syn-ws/dw-legacy', 'idle-data-platform|adx-telemetry', 'idle-data-platform|pbi-reports', 'idle-data-platform|pbi-legacy',
-        'idle-redis-cache|redis-session-old', 'idle-redis-cache|amr-sessions-legacy', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused',
+        'idle-redis-cache|redis-session-old', 'idle-redis-cache|amr-sessions-legacy', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused', 'idle-messaging-namespace|sb-dev-notifications',
         'idle-api-management|apim-legacy', 'idle-ml-compute|mlw-research/cpu-cluster', 'idle-ml-compute|mlw-research/batch-cluster',
         'orphaned-private-endpoint|pe-st-deleted', 'orphaned-private-endpoint|pe-sql-rejected', 'unused-public-ip-prefix|ippre-legacy',
         'empty-edge-profile|afd-old-site', 'empty-edge-profile|tm-unused', 'nonprod-vm-always-on|vm-dev-api',
@@ -279,7 +292,7 @@ try {
     }
     Test 'Metric checks: candidates that are in use are dropped, not reported' {
         foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress',
-                       'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'pbi-portal', 'redis-prod', 'amr-catalog', 'evh-telemetry', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
+                       'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'pbi-portal', 'redis-prod', 'amr-catalog', 'evh-telemetry', 'sb-std-orders', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
                        'vm-api-02', 'vm-api-tiny', 'vm-cache-01', 'Standard_E8s_v5 (cccccccc)') {
             Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is in use but was reported"
         }
@@ -375,6 +388,10 @@ try {
         Assert ($amr.reason -match 'Azure Managed Redis Balanced B5, high availability, 2 instances') 'Managed Redis: kind, SKU and instance count'
         Assert ($amr.referenceCommandNotExecuted -match '^az redisenterprise delete') 'Managed Redis uses the redisenterprise command'
         Assert ($amr.suggestedAction -match 'turning off high availability halves') 'Managed Redis with HA: mention the dev/test option'
+        $sbs = Get-Row $base 'sb-dev-notifications'
+        Assert ($sbs.reason -match 'Service Bus Standard, 1 base unit\), but the base unit bills every hour') 'Service Bus Standard: billed by its base unit'
+        Assert ($sbs.suggestedAction -notmatch 'scale it down') 'Service Bus Standard has no units to scale down'
+        Assert ((Get-Row $base 'sb-legacy-orders').suggestedAction -match 'scale it down to the fewest units') 'Service Bus Premium can still scale down'
     }
     Test 'Scale set instances: per-instance deallocate command; AKS nodes go through the node pool at medium confidence' {
         $inst = Get-Row $base 'vmss-web_3'
@@ -391,7 +408,7 @@ try {
                              'disk-sql-data-old' = '135.18'; 'asp-legacy-api' = '248.2'
                              'ddos-legacy-plan' = '2943.55'; 'asp-intranet-old' = '219'; 'asp-free-stopped' = '0'; 'fw-hub-legacy' = '1277.5'; 'fw-dev-dnat' = '912.5'
                              'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
-                             'adx-telemetry' = '2020.64'; 'pbi-reports' = '1465.91'; 'pbi-legacy' = '735.91'; 'redis-session-old' = '100.74'; 'amr-sessions-legacy' = '227.76'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
+                             'adx-telemetry' = '2020.64'; 'pbi-reports' = '1465.91'; 'pbi-legacy' = '735.91'; 'redis-session-old' = '100.74'; 'amr-sessions-legacy' = '227.76'; 'evh-dev-unused' = '10.95'; 'sb-dev-notifications' = '9.81'; 'apim-legacy' = '48.03'
                              'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
                              'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'snap-sql-daily-premium' = '35.84'; 'snap-build-weekly-03' = '12.8'; 'vm-api-01' = '280.32'
                              'vmss-web_3' = '70.08'; 'aks-nodepool1-12345678-vmss_1' = '140.16' }

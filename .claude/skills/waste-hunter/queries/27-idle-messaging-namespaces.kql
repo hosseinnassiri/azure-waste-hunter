@@ -1,13 +1,15 @@
-// waste-hunter 27 · Idle Service Bus Premium and Event Hubs namespaces (CANDIDATES, confirmed by metrics)
-// Service Bus Premium bills per messaging unit per hour, and Event Hubs per throughput or processing
-// unit per hour, whether or not messages flow. (Service Bus Basic and Standard bill mostly per
-// operation, so they're skipped.) Event Hubs namespaces on a dedicated cluster are skipped: the
-// cluster is billed. The runner flags a namespace with 0 incoming and 0 outgoing messages in 30 days.
+// waste-hunter 27 · Idle Service Bus and Event Hubs namespaces (CANDIDATES, confirmed by metrics)
+// Service Bus Premium bills per messaging unit per hour, Service Bus Standard a base unit per hour
+// (about USD 10 a month; operations on top), and Event Hubs per throughput or processing unit per
+// hour, whether or not messages flow. (Service Bus Basic bills per operation only, so it's skipped.)
+// Event Hubs namespaces on a dedicated cluster are skipped: the cluster is billed. The runner flags a
+// namespace with 0 incoming and 0 outgoing messages in 30 days.
 // READ-ONLY. Run:  az graph query -q @27-idle-messaging-namespaces.kql --first 1000
 resources
 | where type in~ ('microsoft.servicebus/namespaces', 'microsoft.eventhub/namespaces')
-| extend tierName = tostring(sku.tier), units = coalesce(toint(sku.capacity), 1)
-| where (type =~ 'microsoft.servicebus/namespaces' and tierName =~ 'Premium')
+| extend tierName = tostring(sku.tier)
+| extend units = iff(type =~ 'microsoft.servicebus/namespaces' and tierName =~ 'Standard', 1, coalesce(toint(sku.capacity), 1))   // Standard: one base unit, no capacity
+| where (type =~ 'microsoft.servicebus/namespaces' and tierName in~ ('Standard', 'Premium'))
      or (type =~ 'microsoft.eventhub/namespaces' and tierName in~ ('Basic', 'Standard', 'Premium'))
 | where isempty(tostring(properties.clusterArmId))
 | extend service = iff(type =~ 'microsoft.servicebus/namespaces', 'Service Bus', 'Event Hubs')
