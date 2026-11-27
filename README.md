@@ -36,7 +36,7 @@ subscription X"* or *"orphaned resources under management group Y"*. Or run the 
 | 23 | Idle Azure Firewalls | 0 rule hits and under 1 GiB processed in 30 days |
 | 24 | Over-provisioned Cosmos DB throughput | provisioned RU/s whose busiest hour used under 10% of it in 30 days (saving: down to twice the peak) |
 | 25 | Idle Fabric, Synapse and Data Explorer compute | running Synapse pools and Data Explorer clusters with no connections or queries; Active Fabric capacities (low: no usage metric) |
-| 26 | Idle Redis caches | no connected client in 30 days |
+| 26 | Idle Redis caches | Azure Cache for Redis and Azure Managed Redis with no connected client in 30 days |
 | 27 | Idle Service Bus Premium and Event Hubs namespaces | 0 messages in or out in 30 days |
 | 28 | Idle API Management | 0 gateway requests in 30 days (Consumption tier skipped) |
 | 29 | ML compute clusters that never scale to zero | at least one idle node in every hour for 30 days (minimum nodes above 0) |

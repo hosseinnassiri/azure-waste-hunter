@@ -336,9 +336,15 @@ Set-Metric $adxBusy.id 'IngestionVolumeInMB' 'total' @(@{ value = 900 })
 Set-Metric $adxBusy.id 'QueryResult' 'count' @(@{ value = 4500 })
 
 $redisT = 'Microsoft.Cache/Redis'
-$rdsOld  = Cand 'idle-redis-cache' $D 'rg-web-dev' $redisT 'redis-session-old' 'eastus' @{ env = 'dev'; sku = 'C1'; tier = 'Standard'; sizeGb = 1; extra = '6.0' } ([ordered]@{ shards = 1; tier = 'Standard' })
-$rdsProd = Cand 'idle-redis-cache' $P 'rg-web' $redisT 'redis-prod' 'eastus' @{ env = 'prod'; sku = 'P1'; tier = 'Premium'; sizeGb = 1; extra = '6.0' } ([ordered]@{ shards = 1; tier = 'Premium' })
-Save '26-idle-redis-caches.json' @($rdsOld, $rdsProd)
+$rdsOld  = Cand 'idle-redis-cache' $D 'rg-web-dev' $redisT 'redis-session-old' 'eastus' @{ env = 'dev'; sku = 'C1'; tier = 'Standard'; sizeGb = 1; extra = '6.0' } ([ordered]@{ units = 1; tier = 'Standard'; managed = $false })
+$rdsProd = Cand 'idle-redis-cache' $P 'rg-web' $redisT 'redis-prod' 'eastus' @{ env = 'prod'; sku = 'P1'; tier = 'Premium'; sizeGb = 1; extra = '6.0' } ([ordered]@{ units = 1; tier = 'Premium'; managed = $false })
+# Azure Managed Redis: billed per instance, 2 with high availability
+$amrT = 'Microsoft.Cache/redisEnterprise'
+$amrOld  = Cand 'idle-redis-cache' $P 'rg-web' $amrT 'amr-sessions-legacy' 'eastus' @{ owner = 'web@example.com'; env = 'prod'; sku = 'B5'; tier = 'Balanced'; sizeGb = 2 } ([ordered]@{ units = 2; tier = 'Balanced'; managed = $true })
+$amrBusy = Cand 'idle-redis-cache' $P 'rg-web' $amrT 'amr-catalog' 'eastus' @{ env = 'prod'; sku = 'M20'; tier = 'MemoryOptimized'; sizeGb = 2 } ([ordered]@{ units = 2; tier = 'MemoryOptimized'; managed = $true })
+Save '26-idle-redis-caches.json' @($rdsOld, $rdsProd, $amrOld, $amrBusy)
+Set-Metric $amrOld.id 'connectedclients' 'maximum' @()
+Set-Metric $amrBusy.id 'connectedclients' 'maximum' @(@{ value = 140 })
 Set-Metric $rdsOld.id 'connectedclients' 'maximum' @()                     # no client ever: no series
 Set-Metric $rdsProd.id 'connectedclients' 'maximum' @(@{ value = 25 })
 

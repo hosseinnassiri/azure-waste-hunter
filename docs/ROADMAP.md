@@ -109,7 +109,7 @@ Everything in sections 1-5 is done or decided against. The open items:
 |---|---|---|
 | ~~★★~~ | ~~Backups of deleted databases (SQL in VM, SAP HANA)~~ — **done** 2026-11-27 | query 22 now also emits `orphaned-workload-backup` for database backups whose host VM is gone (checked live: the query runs). Not covered: a database dropped from a VM that still exists, which Resource Graph can't tell apart from one that's just unprotected |
 | ~~★★~~ | ~~Memory check for oversized VMs (type 37)~~ — **done** 2026-11-27 | `Available Memory Percentage` read in the same call as CPU: over 50% used at the busiest hour is dropped (half the size wouldn't fit), 40% or less is high confidence, no data stays medium. Disk throughput, which also halves, is still not checked |
-| ★★ | Azure Managed Redis (`microsoft.cache/redisenterprise`) | type 26 covers Azure Cache for Redis only |
+| ~~★★~~ | ~~Azure Managed Redis (`microsoft.cache/redisenterprise`)~~ — **done** 2026-11-27 | type 26 now covers both. Managed Redis is priced per instance (2 with high availability, per the docs); legacy Enterprise and Enterprise Flash are priced as list price x capacity units, which is an **assumption to check** against a real bill. The docs warn that internal processes can show as connected clients, so a strict "0 clients" can miss idle caches (it never flags a busy one) |
 | ★ | Zone-redundant SQL databases in non-prod | left out of type 36: no single price meter for the difference |
 | ★ | Power BI Embedded (A SKUs) capacities left running | same pattern as Fabric (type 25) |
 | ★ | Full snapshots that could be incremental | storage saving |

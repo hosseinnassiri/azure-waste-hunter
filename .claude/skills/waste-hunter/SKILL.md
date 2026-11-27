@@ -106,7 +106,7 @@ and a suggested action (text only).
 | 23 | `23-idle-firewalls.kql` | allocated Azure Firewall with 0 rule hits and under 1 GiB processed in 30 days (deallocated firewalls skipped) | high under 100 MiB; medium otherwise (DNAT has no hit metric) |
 | 24 | `24-overprovisioned-cosmos-db.kql` | provisioned RU/s (summed per database and container) whose busiest partition peaked under 10% in 30 days; saving = down to twice the peak, 400 RU/s minimum each; serverless skipped | high with no RU consumed; medium otherwise |
 | 25 | `25-idle-data-platforms.kql` | Online Synapse dedicated SQL pool with 0 connections and queries; Running Data Explorer cluster with 0 queries; Active Fabric capacity | Synapse and idle Data Explorer: high; Data Explorer ingesting but never queried: medium; **Fabric: low** (no Azure Monitor usage metric, check the Capacity Metrics app) |
-| 26 | `26-idle-redis-caches.kql` | Azure Cache for Redis with no connected client in 30 days | high |
+| 26 | `26-idle-redis-caches.kql` | Azure Cache for Redis or Azure Managed Redis (`redisenterprise`; billed per instance, 2 with high availability) with no connected client in 30 days | high |
 | 27 | `27-idle-messaging-namespaces.kql` | Service Bus Premium or Event Hubs namespace with 0 messages in or out in 30 days (dedicated-cluster namespaces skipped) | high |
 | 28 | `28-idle-api-management.kql` | API Management (any tier but Consumption) with 0 gateway requests in 30 days | high |
 | 29 | `29-idle-ml-compute-clusters.kql` | ML compute cluster with at least one idle node in every hour for 30 days (workspace node metrics per cluster); compute instances not covered | high if it ran no jobs; medium if it runs jobs (only the always-idle nodes are the saving) |

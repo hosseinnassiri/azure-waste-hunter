@@ -102,10 +102,19 @@
   },
 
   "redisCache": {
-    "_about": "Azure Cache for Redis per cache per hour (Premium per shard).",
+    "_about": "Per hour. Azure Cache for Redis per cache (Premium per shard); Azure Managed Redis (Balanced, MemoryOptimized, ComputeOptimized, FlashOptimized) per instance, 2 with high availability; legacy Enterprise per capacity unit.",
     "Basic":    { "C0": 0.022, "C1": 0.055, "C2": 0.09, "C3": 0.18, "C4": 0.21, "C5": 0.42, "C6": 0.84 },
     "Standard": { "C0": 0.055, "C1": 0.138, "C2": 0.225, "C3": 0.45, "C4": 0.525, "C5": 1.05, "C6": 2.1 },
-    "Premium":  { "P1": 0.555, "P2": 1.11, "P3": 2.219, "P4": 4.44, "P5": 10.05 }
+    "Premium":  { "P1": 0.555, "P2": 1.11, "P3": 2.219, "P4": 4.44, "P5": 10.05 },
+    "Balanced": { "B0": 0.016, "B1": 0.032, "B3": 0.065, "B5": 0.156, "B10": 0.315, "B20": 0.629, "B50": 1.257, "B100": 2.496, "B150": 3.77,
+                  "B250": 5.04, "B350": 7.54, "B500": 9.984, "B700": 14.976, "B1000": 19.968 },
+    "MemoryOptimized": { "M10": 0.216, "M20": 0.431, "M50": 0.862, "M100": 1.724, "M150": 2.592, "M250": 3.456, "M350": 5.184, "M500": 6.912,
+                         "M700": 10.368, "M1000": 13.824, "M1500": 20.736, "M2000": 27.648 },
+    "ComputeOptimized": { "X1": 0.146, "X3": 0.219, "X5": 0.291, "X10": 0.583, "X20": 1.166, "X50": 2.331, "X100": 4.663, "X150": 6.994,
+                          "X250": 9.326, "X350": 13.989, "X500": 18.651, "X700": 23.314 },
+    "FlashOptimized": { "A250": 1.56, "A500": 3.12, "A700": 4.68, "A1000": 6.24, "A1500": 9.358, "A2000": 12.477, "A4500": 24.954 },
+    "Enterprise": { "E1": 0.04, "E5": 0.241, "E10": 0.481, "E20": 0.96, "E50": 1.885, "E100": 3.769, "E200": 7.538, "E400": 15.076 },
+    "EnterpriseFlash": { "F300": 2.006, "F700": 4.011, "F1500": 8.023 }
   },
 
   "messaging": {

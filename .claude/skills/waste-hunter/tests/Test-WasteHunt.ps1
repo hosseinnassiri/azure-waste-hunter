@@ -238,7 +238,7 @@ try {
         'orphaned-vm-backup|rsv-dev/vm-old01', 'orphaned-workload-backup|rsv-dev/vm-old01/billing', 'idle-firewall|fw-hub-legacy', 'idle-firewall|fw-dev-dnat',
         'overprovisioned-cosmos-db|cosmos-orders-legacy', 'overprovisioned-cosmos-db|cosmos-dev-idle',
         'idle-data-platform|fab-analytics', 'idle-data-platform|syn-ws/dw-legacy', 'idle-data-platform|adx-telemetry',
-        'idle-redis-cache|redis-session-old', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused',
+        'idle-redis-cache|redis-session-old', 'idle-redis-cache|amr-sessions-legacy', 'idle-messaging-namespace|sb-legacy-orders', 'idle-messaging-namespace|evh-dev-unused',
         'idle-api-management|apim-legacy', 'idle-ml-compute|mlw-research/cpu-cluster', 'idle-ml-compute|mlw-research/batch-cluster',
         'orphaned-private-endpoint|pe-st-deleted', 'orphaned-private-endpoint|pe-sql-rejected', 'unused-public-ip-prefix|ippre-legacy',
         'empty-edge-profile|afd-old-site', 'empty-edge-profile|tm-unused', 'nonprod-vm-always-on|vm-dev-api',
@@ -252,7 +252,7 @@ try {
     }
     Test 'Metric checks: candidates that are in use are dropped, not reported' {
         foreach ($n in 'ca-api-busy', 'log-app-prod', 'stwebassets', 'oai-research/gpt-ptu-prod', 'oai-research/gpt-4o-chat', 'bas-prod', 'sql-app/orders', 'vm-weekend-batch_data', 'fw-prod-egress',
-                       'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'redis-prod', 'evh-telemetry', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
+                       'cosmos-busy', 'cosmos-free', 'syn-ws/dw-prod', 'adx-busy', 'redis-prod', 'amr-catalog', 'evh-telemetry', 'apim-prod', 'mlw-research/gpu-train', 'stdevtiny',
                        'vm-api-02', 'vm-api-tiny', 'vm-cache-01', 'Standard_E8s_v5 (cccccccc)') {
             Assert (-not ($base.Rows | Where-Object { $_.name -eq $n })) "$n is in use but was reported"
         }
@@ -341,6 +341,10 @@ try {
         Assert ((Get-Row $base 'vm-batch-old').reason -match 'memory is not reported') 'no memory data is said plainly'
         Assert ((Get-Row $base 'mlw-research/cpu-cluster').reason -match 'at least 2 idle node\(s\) \(8 cores\)') 'ML: per-cluster minimum idle nodes and cores'
         Assert ((Get-Row $base 'stdevlogs').reason -match '500 GiB as RA-GRS.*LRS keeps') 'storage: capacity and the target redundancy'
+        $amr = Get-Row $base 'amr-sessions-legacy'
+        Assert ($amr.reason -match 'Azure Managed Redis Balanced B5, high availability, 2 instances') 'Managed Redis: kind, SKU and instance count'
+        Assert ($amr.referenceCommandNotExecuted -match '^az redisenterprise delete') 'Managed Redis uses the redisenterprise command'
+        Assert ($amr.suggestedAction -match 'turning off high availability halves') 'Managed Redis with HA: mention the dev/test option'
     }
     Test 'Costs: deterministic offline prices and billed costs' {
         $cases = [ordered]@{ 'vm-win-jumpbox' = '97.53'; 'nat-dev-unused' = '32.85'; 'sql-legacy/reporting-old' = '147.17'; 'lb-old-web' = '18.25'
@@ -348,7 +352,7 @@ try {
                              'disk-sql-data-old' = '135.18'; 'asp-legacy-api' = '248.2'
                              'ddos-legacy-plan' = '2943.55'; 'asp-intranet-old' = '219'; 'asp-free-stopped' = '0'; 'fw-hub-legacy' = '1277.5'; 'fw-dev-dnat' = '912.5'
                              'cosmos-orders-legacy' = '186.88'; 'cosmos-dev-idle' = '70.08'; 'fab-analytics' = '8409.6'; 'syn-ws/dw-legacy' = '5511.5'
-                             'adx-telemetry' = '2020.64'; 'redis-session-old' = '100.74'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
+                             'adx-telemetry' = '2020.64'; 'redis-session-old' = '100.74'; 'amr-sessions-legacy' = '227.76'; 'evh-dev-unused' = '10.95'; 'apim-legacy' = '48.03'
                              'mlw-research/cpu-cluster' = '292'; 'pe-st-deleted' = '7.3'; 'ippre-legacy' = '70.08'; 'afd-old-site' = '35'; 'tm-unused' = '0'
                              'vm-dev-api' = '90.1'; 'vm-batch-old' = '70.08'; 'vm-win-app01' = '134.32'; 'sqlsrv-erp/erp' = '587.5'; 'stdevlogs' = '15.6'; 'vm-api-01' = '280.32' }
         foreach ($k in $cases.Keys) { Assert-Equal $cases[$k] (Get-Row $base $k).monthlyCost "$k monthly cost" }
