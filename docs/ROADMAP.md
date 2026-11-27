@@ -60,9 +60,8 @@ expected finding set.
    needs the same change in all 19 queries and a live check (blocked until `resource-graph` is installed).
 2. **Configurable thresholds**: snapshot age (90 days), minimum age (30 days), Hot-blob size
    (100 GiB), Container Apps traffic (100 MiB).
-3. **Scheduled-scan template**: a GitHub Actions workflow that signs in through OIDC with a
-   Reader-only identity, a `-FailOnHighConfidenceAbove <amount>` exit code, a job summary, and reports
-   kept as short-lived artifacts (they contain resource IDs).
+3. **Scheduled-scan template** — not needed (decided 2026-11-27). Scans run locally on demand, and
+   reports stay in the gitignored `reports/` folder. CI runs only the offline test suite.
 4. **Trends across N scans** — done. Every earlier scan of the same scope: one row per scan (also
    `trends.csv`), median days to resolve overall and per owner (from resolutions each scan now
    records in `findings.json`), and the findings open longest.
@@ -77,4 +76,4 @@ expected finding set.
 1. Correctness (section 1).
 2. Scaling: throttling retry, parallel metric checks, metric cache.
 3. Value: exclusions file, DDoS, Firewall, all-stopped plans, orphaned VM backups (all done; queries 20-23 checked live on 2026-11-27, which caught and fixed a Resource Graph join limit in 22).
-4. Product: split the runner with one record per type (done), trends (done), scheduled CI; MCA billing not pursued.
+4. Product: split the runner with one record per type (done), trends (done); scheduled CI and MCA billing not pursued.
