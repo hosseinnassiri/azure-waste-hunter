@@ -1,5 +1,11 @@
 # azure-waste-hunter
 
+> [!IMPORTANT]
+> **This repository has moved and is archived.** waste-hunter now lives in
+> [hosseinnassiri/azure-ops-skills](https://github.com/hosseinnassiri/azure-ops-skills/tree/main/.claude/skills/waste-hunter),
+> which is also its plugin marketplace: `/plugin marketplace add hosseinnassiri/azure-ops-skills`.
+> This copy gets no further updates.
+
 A [Claude Code](https://claude.com/claude-code) skill that finds wasted spend in Azure and writes a
 ranked report with estimated monthly savings. **It's read-only. It never creates, changes, stops or
 deletes anything.**
